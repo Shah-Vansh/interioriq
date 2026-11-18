@@ -1,0 +1,22 @@
+fastapi
+uvicorn[standard]
+sqlalchemy>=2.0
+pydantic-settings
+pyjwt
+python-multipart
+ezdxf
+shapely
+pillow
+pypdfium2
+reportlab                 # quotation PDFs
+rapidocr-onnxruntime   # default local OCR (PaddleOCR models via ONNX, no model download)
+pytest
+httpx
+alembic                   # schema migrations (runs at start-up; `alembic upgrade head` by hand with several servers)
+celery                    # optional background workers (TASK_BACKEND=celery); unused with the default thread backend
+# Optional (install when you want the feature):
+# pytesseract (+ the tesseract binary) -> fallback OCR engine
+# paddleocr                  -> preferred OCR engine when installed
+# ultralytics               -> YOLO detection
+# sentence-transformers     -> local embeddings for RAG
+# psycopg2-binary + pgvector -> Postgres (set DATABASE_URL)

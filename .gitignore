@@ -1,0 +1,27 @@
+# Dependencies and build output
+node_modules/
+.next/
+out/
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.tsbuildinfo
+
+# Local data — never commit real client data or user accounts
+*.db
+*.db-journal
+storage/
+apps/api/storage/
+
+# Secrets / local settings (commit only the *.example files)
+.env
+.env.local
+.env.*.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
