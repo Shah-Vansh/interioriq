@@ -422,7 +422,7 @@ def create_work_orders(bid: str, db: Session = Depends(get_db), user: dict = Dep
     for r in fulfilment.lines(db, b):
         if r["kind"] != "MANUFACTURED": continue
         have = db.query(m.WorkOrder).filter_by(boq_id=b.id, sku=r["sku"]).count()
-        L, W, H = r["size"]; cl = cutting.cut_list(L, W, H)
+        L, W, H = r["size"]; cl = cutting.cut_list(L, W, H, r.get("category"))
         for n in range(have + 1, r["qty"] + 1):
             w = m.WorkOrder(wo_number=flow.next_number(db, m.WorkOrder, m.WorkOrder.wo_number, f"WO-{project.project_number}", 3), project_id=project.id, boq_id=b.id,
                             sku=r["sku"], description=r["description"], unit_no=n, cut_list=cl, updated_by=user.get("name"))
@@ -437,6 +437,24 @@ def list_wos(project_id: str | None = None, stage: str | None = None, db: Sessio
     if project_id: q = q.filter_by(project_id=project_id)
     if stage: q = q.filter_by(stage=stage)
     return [wo_out(db, w) for w in q.order_by(m.WorkOrder.wo_number)]
+
+
+@router.get("/work-orders/{wid}/shop-drawing.{fmt}")
+def shop_drawing(wid: str, fmt: str, db: Session = Depends(get_db), user: dict = Depends(require_roles(*STAFF))):
+    """Shop drawing of one unit (PDF A3 or DXF), from the same rules as its cutting list."""
+    from app.services import shopdrawing
+    w = db.get(m.WorkOrder, wid)
+    if not w: raise HTTPException(404, "Work order not found")
+    if fmt not in ("pdf", "dxf"): raise HTTPException(404, "Use .pdf or .dxf")
+    item = db.query(m.FurnitureItem).filter_by(sku=w.sku).first() if w.sku else None
+    p = db.get(m.Project, w.project_id); name = f"{w.wo_number}-{w.unit_no}".replace("/", "-")
+    if fmt == "pdf":
+        body = shopdrawing.pdf(title=w.description, wo_number=w.wo_number, project=f"{p.project_number} {p.name}", unit_no=w.unit_no, sku=w.sku,
+                               material=item.material if item else None, category=item.category if item else w.description, cut=w.cut_list,
+                               company=companylib.get(db).get("name") or "InteriorIQ")
+        return Response(body, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="shop-drawing-{name}.pdf"'})
+    body = shopdrawing.dxf(title=f"{w.wo_number} {w.description}", category=item.category if item else w.description, cut=w.cut_list)
+    return Response(body, media_type="application/dxf", headers={"Content-Disposition": f'attachment; filename="shop-drawing-{name}.dxf"'})
 
 
 class StageIn(_In):
@@ -466,7 +484,7 @@ def project_cutting(pid: str, db: Session = Depends(get_db), user: dict = Depend
     _project(db, pid); out = []
     for b in _approved_boqs(db, pid):
         need = fulfilment.board_need(db, b)
-        items = [{"sku": r["sku"], "description": r["description"], "qty": r["qty"], "cut_list": cutting.cut_list(*r["size"])}
+        items = [{"sku": r["sku"], "description": r["description"], "qty": r["qty"], "cut_list": cutting.cut_list(*r["size"], r.get("category"))}
                  for r in fulfilment.lines(db, b) if r["kind"] == "MANUFACTURED"]
         out.append({"boq": quotation_row(db, b), "items": items, "sheets": {str(k): v for k, v in need["sheets"].items()}, "edge_band_m": need["edge_band_m"]})
     return out

@@ -109,6 +109,9 @@ with sync_playwright() as p:
     for _ in range(5):
         page.get_by_label(f"Advance WO-{PN}-001", exact=True).click(); page.wait_for_timeout(500)
     check("work order moved through the workshop to READY", page.locator(f"[data-stage=READY] [data-wo='WO-{PN}-001']").count() == 1)
+    with page.expect_download() as dl: page.get_by_label(f"Shop drawing PDF WO-{PN}-001", exact=True).click()
+    import pypdfium2 as _pdf; _t = _pdf.PdfDocument(dl.value.path())[0].get_textpage().get_text_range()
+    check("shop drawing PDF downloads with elevations and the cutting list", "FRONT ELEVATION" in _t and "CUTTING LIST" in _t and f"WO-{PN}-001" in _t)
     page.goto(f"{WEB}/execution/cutting"); pick_project(); page.wait_for_selector("[data-testid=sheet-total]")
     check("cutting list shows panels and sheet totals", "18mm sheets" in page.get_by_test_id("sheet-total").inner_text() and page.locator("text=Shutter").count() >= 1)
 

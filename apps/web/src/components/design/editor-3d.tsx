@@ -1,5 +1,5 @@
 'use client'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Canvas, ThreeEvent, useThree } from '@react-three/fiber'
 import { Edges, Grid, Html, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei'
@@ -14,7 +14,10 @@ import {
   History, push, redo, replacePresent, rotate90, rotateBy, snap, toThree, undo,
 } from '@/lib/editor-logic'
 import { cn, fmt } from '@/lib/utils'
-import { Camera } from 'lucide-react'
+import { Camera, Lightbulb, PersonStanding, Sparkles, Sun } from 'lucide-react'
+import { FurnitureModel } from '@/components/design/three/models'
+import { Lighting, RealisticRoom, eyePoint, facing, isNight } from '@/components/design/three/scene'
+import { M } from '@/components/design/three/materials'
 
 const COLOURS: Record<string, string> = { Bed: '#b45309', Wardrobe: '#78716c', Study: '#0e7490', Sofa: '#6d28d9', Chair: '#65a30d' }
 const FLOOR = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
@@ -47,12 +50,13 @@ function RoomShell({ L, W, H }: { L: number; W: number; H: number }) {
   )
 }
 
-function Furniture({ o, selected, flagged, onDown, onMove, onUp }: {
-  o: Obj; selected: boolean; flagged: boolean
+function Furniture({ o, selected, flagged, onDown, onMove, onUp, realistic, room }: {
+  o: Obj; selected: boolean; flagged: boolean; realistic: boolean; room: { L: number; W: number }
   onDown: (id: string, p: THREE.Vector3) => void; onMove: (p: THREE.Vector3) => void; onUp: () => void
 }) {
   const [x, y, z] = toThree(o)
   const base = o.colour || (COLOURS[o.category] ?? '#a8a29e')
+  const f = realistic ? facing(o, room.L, room.W) : null
   return (
     <group position={[x, y, z]} rotation={[0, ((o.rotation ?? 0) * Math.PI) / 180, 0]}>
       <mesh
@@ -66,22 +70,26 @@ function Furniture({ o, selected, flagged, onDown, onMove, onUp }: {
         onPointerOut={() => { document.body.style.cursor = 'auto' }}
       >
         <boxGeometry args={[o.length / 1000, displayHeight(o) / 1000, o.width / 1000]} />
-        <meshStandardMaterial color={flagged ? '#dc2626' : base} transparent opacity={0.88} roughness={0.7} />
-        <Edges color={selected ? '#f59e0b' : '#44403c'} />
+        {realistic ? <primitive object={M.hit()} attach="material" /> : <meshStandardMaterial color={flagged ? '#dc2626' : base} transparent opacity={0.88} roughness={0.7} />}
+        {(!realistic || selected) && <Edges color={selected ? '#f59e0b' : '#44403c'} />}
       </mesh>
-      <Html center position={[0, displayHeight(o) / 2000 + 0.12, 0]} style={{ pointerEvents: 'none' }}>
+      {f && <group position={[0, -displayHeight(o) / 2000, 0]} rotation={[0, f.yaw, 0]}>
+        <FurnitureModel category={o.category} name={o.name} l={f.l / 1000} d={f.d / 1000} h={Math.max(o.height, 20) / 1000} colour={o.colour} /></group>}
+      {realistic && flagged && <mesh material={M.red()}><boxGeometry args={[o.length / 1000 + 0.02, displayHeight(o) / 1000 + 0.02, o.width / 1000 + 0.02]} /></mesh>}
+      {(!realistic || selected) && <Html center position={[0, displayHeight(o) / 2000 + 0.12, 0]} style={{ pointerEvents: 'none' }}>
         <div className={cn('text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap shadow-sm', selected ? 'bg-amber-600 text-white font-semibold' : 'bg-white/80 text-stone-700')}>{o.name}</div>
-      </Html>
+      </Html>}
     </group>
   )
 }
 
 /** Top view is ORTHOGRAPHIC (no parallax, so tall objects don't look displaced); 3D view is a steep perspective so tall furniture doesn't hide the room. */
-function CameraRig({ view, L, W }: { view: 'perspective' | 'top'; L: number; W: number }) {
+function CameraRig({ view, L, W, eye }: { view: 'perspective' | 'top' | 'eye'; L: number; W: number; eye?: { pos: [number, number, number] } }) {
   const { size } = useThree()
   const cx = L / 2000, cz = -W / 2000, span = Math.max(L, W) / 1000
   const k = 1.5 / Math.min(1, size.width / size.height)   // back the camera off on narrow canvases so the whole room stays in frame
   const zoom = Math.min(size.width / ((L / 1000) * 1.3), size.height / ((W / 1000) * 1.3))   // pixels per metre
+  if (view === 'eye') return <PerspectiveCamera makeDefault position={eye?.pos ?? [cx, 1.6, cz]} fov={68} near={0.05} far={200} />   // standing in the doorway / a free corner, eye height
   return view === 'top'
     ? <OrthographicCamera makeDefault position={[cx, 30, cz + 0.001]} zoom={zoom} near={0.1} far={100} />
     : <PerspectiveCamera makeDefault position={[cx + span * 0.55 * k, span * 1.15 * k, cz + span * 0.85 * k]} fov={45} near={0.1} far={100} />
@@ -89,7 +97,10 @@ function CameraRig({ view, L, W }: { view: 'perspective' | 'top'; L: number; W: 
 
 // ── Editor ───────────────────────────────────────────────────────────────────
 export function Editor3D() {
-  const [sel, setSel] = useState({ roomId: '', projectId: '' })
+  const [sel, setSel] = useState({ roomId: '', projectId: '', roomType: '' })
+  const [realistic, setRealistic] = useState(true)          // real furniture shapes, walls, sun, shadows (off = fast boxes)
+  const [hour, setHour] = useState(10.5)
+  const [lightsOn, setLightsOn] = useState(false)
   const canvasWrap = useRef<HTMLDivElement>(null)
   const [ops, setOps] = useState<{ id: string; kind: string; wall: string; offset: number; width: number; height: number; sill: number }[]>([])
   useEffect(() => { setOps([]); if (sel.roomId) api.get<{ openings: typeof ops }>(`/rooms/${sel.roomId}/openings`).then(r => setOps(r.openings)).catch(() => {}) }, [sel.roomId])
@@ -97,7 +108,7 @@ export function Editor3D() {
   const [hist, setHist] = useState<History>(createHistory([]))
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [snapOn, setSnapOn] = useState(true)
-  const [view, setView] = useState<'perspective' | 'top'>('perspective')
+  const [view, setView] = useState<'perspective' | 'top' | 'eye'>('perspective')
   const [versions, setVersions] = useState<DesignVersion[]>([])
   const [loadedVersion, setLoadedVersion] = useState<number | null>(null)
   const [savedJson, setSavedJson] = useState('[]')
@@ -245,6 +256,7 @@ export function Editor3D() {
   }
 
   const g = selected && dims ? gaps(selected, dims.L, dims.W) : null
+  const eye = useMemo(() => (dims && view === 'eye' ? eyePoint(dims.L, dims.W, ops, objects) : undefined), [dims, view, ops]) // eslint-disable-line react-hooks/exhaustive-deps
   const total = objects.reduce((a, o) => a + o.price, 0)
   const tbtn = 'flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded border transition-colors disabled:opacity-35 disabled:cursor-not-allowed'
 
@@ -252,13 +264,20 @@ export function Editor3D() {
     <div className="-m-6 flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
       {/* toolbar */}
       <div className="bg-white border-b border-stone-200 px-4 py-2 flex items-center gap-2 flex-wrap">
-        <ProjectRoomPicker guard={() => !dirty || confirm('You have unsaved changes in this room. Discard them and switch?')} onChange={s => setSel({ roomId: s.roomId, projectId: s.projectId })} />
+        <ProjectRoomPicker guard={() => !dirty || confirm('You have unsaved changes in this room. Discard them and switch?')} onChange={s => setSel({ roomId: s.roomId, projectId: s.projectId, roomType: s.room?.room_type ?? '' })} />
         <div className="w-px h-6 bg-stone-200 mx-1" />
         <button className={cn(tbtn, 'border-stone-200 hover:bg-stone-50')} onClick={actions.undo} disabled={!canUndo(hist)} title="Undo (Ctrl+Z)"><Undo2 className="w-3.5 h-3.5" />Undo</button>
         <button className={cn(tbtn, 'border-stone-200 hover:bg-stone-50')} onClick={actions.redo} disabled={!canRedo(hist)} title="Redo (Ctrl+Shift+Z)"><Redo2 className="w-3.5 h-3.5" />Redo</button>
         <button className={cn(tbtn, snapOn ? 'bg-amber-50 border-amber-300 text-amber-800' : 'border-stone-200')} onClick={() => setSnapOn(s => !s)} title="Snap to 50mm"><Magnet className="w-3.5 h-3.5" />Snap {SNAP_MM}mm</button>
         <button className={cn(tbtn, view === 'perspective' ? 'bg-stone-900 text-white border-stone-900' : 'border-stone-200')} onClick={() => setView('perspective')}><Eye className="w-3.5 h-3.5" />3D</button>
         <button className={cn(tbtn, view === 'top' ? 'bg-stone-900 text-white border-stone-900' : 'border-stone-200')} onClick={() => setView('top')}><Grid3x3 className="w-3.5 h-3.5" />Top</button>
+        <button className={cn(tbtn, view === 'eye' ? 'bg-stone-900 text-white border-stone-900' : 'border-stone-200')} onClick={() => setView('eye')} title="Stand in the room at eye height"><PersonStanding className="w-3.5 h-3.5" />Eye level</button>
+        <div className="w-px h-6 bg-stone-200 mx-1" />
+        <button className={cn(tbtn, realistic ? 'bg-amber-50 border-amber-300 text-amber-800' : 'border-stone-200')} onClick={() => setRealistic(r => !r)} aria-pressed={realistic} title="Real furniture, walls, sunlight and shadows (off = quick boxes)"><Sparkles className="w-3.5 h-3.5" />Realistic</button>
+        {realistic && <label className="flex items-center gap-1.5 text-[11px] text-stone-600" title="Time of day (sun position)"><Sun className="w-3.5 h-3.5 text-amber-600" />
+          <input type="range" aria-label="Time of day" min={6} max={21} step={0.25} value={hour} onChange={e => setHour(Number(e.target.value))} className="w-24 accent-amber-700" />
+          <span className="w-10 font-mono">{`${Math.floor(hour)}:${String(Math.round((hour % 1) * 60)).padStart(2, '0')}`}</span></label>}
+        {realistic && <button className={cn(tbtn, lightsOn || isNight(hour) ? 'bg-amber-50 border-amber-300 text-amber-800' : 'border-stone-200')} onClick={() => setLightsOn(v => !v)} aria-pressed={lightsOn} title="Ceiling lights"><Lightbulb className="w-3.5 h-3.5" />Lights</button>}
         <div className="flex-1" />
         {versions.length > 0 && (
           <select value={loadedVersion ?? ''} onChange={e => loadVersion(Number(e.target.value))} className="text-xs border border-stone-200 rounded px-2 py-1.5 bg-white">
@@ -296,14 +315,20 @@ export function Editor3D() {
 
           {/* canvas */}
           <div ref={canvasWrap} className="flex-1 relative bg-stone-100">
-            <Canvas gl={{ preserveDrawingBuffer: true }} camera={{ fov: 45, near: 0.1, far: 100 }} onPointerMissed={() => setSelectedId(null)}>
-              <color attach="background" args={['#f0ece6']} />
-              <ambientLight intensity={0.8} /><directionalLight position={[6, 10, 4]} intensity={1.1} /><hemisphereLight args={['#ffffff', '#d6d3d1', 0.4]} />
-              <CameraRig view={view} L={dims.L} W={dims.W} />
-              <RoomShell L={dims.L} W={dims.W} H={dims.H} />
-              <Openings3D ops={ops} L={dims.L} W={dims.W} />
-              {objects.map(o => <Furniture key={o.id} o={o} selected={o.id === selectedId} flagged={flagged.has(o.id)} onDown={onDown} onMove={onMove} onUp={endDrag} />)}
-              <OrbitControls key={view} makeDefault target={[dims.L / 2000, 0, -dims.W / 2000]} enabled={!dragging} enableRotate={view !== 'top'} enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI / 2 - 0.02} />
+            <Canvas key={realistic ? 'real' : 'quick'} shadows={realistic ? 'soft' : false} dpr={[1, 2]} gl={{ preserveDrawingBuffer: true, antialias: true }} camera={{ fov: 45, near: 0.1, far: 100 }} onPointerMissed={() => setSelectedId(null)}>
+              {realistic ? <>
+                <Lighting L={dims.L / 1000} W={dims.W / 1000} H={dims.H / 1000} hour={hour} />
+                <RealisticRoom L={dims.L / 1000} W={dims.W / 1000} H={dims.H / 1000} ops={ops} hour={hour} lightsOn={lightsOn} wet={['BATHROOM', 'UTILITY', 'KITCHEN'].includes(sel.roomType)} />
+              </> : <>
+                <color attach="background" args={['#f0ece6']} />
+                <ambientLight intensity={0.8} /><directionalLight position={[6, 10, 4]} intensity={1.1} /><hemisphereLight args={['#ffffff', '#d6d3d1', 0.4]} />
+                <RoomShell L={dims.L} W={dims.W} H={dims.H} />
+                <Openings3D ops={ops} L={dims.L} W={dims.W} />
+              </>}
+              <CameraRig view={view} L={dims.L} W={dims.W} eye={eye} />
+              {objects.map(o => <Furniture key={o.id} o={o} selected={o.id === selectedId} flagged={flagged.has(o.id)} onDown={onDown} onMove={onMove} onUp={endDrag} realistic={realistic} room={dims} />)}
+              <OrbitControls key={view} makeDefault target={view === 'eye' && eye ? eye.target : [dims.L / 2000, 0, -dims.W / 2000]} enabled={!dragging} enableRotate={view !== 'top'} enableDamping dampingFactor={0.08}
+                maxPolarAngle={view === 'eye' ? Math.PI * 0.62 : Math.PI / 2 - 0.02} minDistance={view === 'eye' ? 0.3 : 0.5} />
             </Canvas>
             <div className="absolute bottom-3 left-3 text-[11px] bg-white/90 border border-stone-200 rounded px-2.5 py-1.5 text-stone-500">
               Room {dims.L} × {dims.W} × {dims.H} mm · drag to move · R rotate · Ctrl+D duplicate · Del delete · arrows nudge

@@ -26,19 +26,47 @@ def _fit(a: float, b: float) -> list[tuple[float, float, int]]:
     return [(round(max(pa, pb)), round(min(pa, pb)), na * nb)]
 
 
-def panels(L: float, D: float, H: float) -> list[dict]:
-    W = L
+PLINTH = 100                          # floor kitchen / utility / vanity units stand on a plinth (not part of the carcass height)
+DRAWERS = 3
+
+
+def unit_kind(category: str | None, H: float) -> str | None:
+    """None = generic carcass (old behaviour). sink / hob / base (floor units on a plinth), wall, tall — shared with the shop drawings."""
+    cat = (category or "").strip().lower()
+    if not cat: return None
+    if cat == "kitchen sink": return "sink"
+    if cat == "kitchen hob": return "hob"
+    if cat in ("kitchen wall", "utility wall", "mirror cabinet"): return "wall"
+    if H >= 1800: return "tall"
+    if H <= 1000 and cat in ("kitchen", "utility base", "vanity"): return "base"
+    return "unit"
+
+
+def panels(L: float, D: float, H: float, category: str | None = None) -> list[dict]:
+    """Panels of one unit. With a category the unit type is respected: floor units lose the plinth from the carcass height (+ a plinth
+    board), sink units have no shelf, hob units are a 3-drawer stack (fronts + drawer boxes) instead of shutters."""
+    W = L; kind = unit_kind(category, H)
+    plinth = PLINTH if kind in ("base", "sink", "hob") else 0
+    CH = H - plinth                                          # carcass height
     bays = max(1, math.ceil(W / 900))                       # vertical partition roughly every 900 mm
     parts = bays - 1
     bay_w = (W - 2 * T - parts * T) / bays
-    shelves_per_bay = 1 if H < 900 else max(1, round(H / 450) - 1)
+    shelves_per_bay = 0 if kind in ("sink", "hob") else 1 if CH < 900 else max(1, round(CH / 450) - 1)
     doors = max(1, round(W / 450))
-    door_w, door_h = W / doors - 3, H - 3
-    raw = [("Side", H, D, 2, T, H * 2), ("Top", W - 2 * T, D, 1, T, W - 2 * T), ("Bottom", W - 2 * T, D, 1, T, W - 2 * T)]
-    if parts: raw.append(("Partition", H - 2 * T, D, parts, T, (H - 2 * T) * parts))
-    raw.append(("Shelf", bay_w, D - 20, shelves_per_bay * bays, T, bay_w * shelves_per_bay * bays))
-    raw.append(("Shutter", door_h, door_w, doors, T, 2 * (door_h + door_w) * doors))
-    raw.append(("Back", W, H, 1, BACK_T, 0))
+    door_w, door_h = W / doors - 3, CH - 3
+    raw = [("Side", CH, D, 2, T, CH * 2), ("Top", W - 2 * T, D, 1, T, W - 2 * T), ("Bottom", W - 2 * T, D, 1, T, W - 2 * T)]
+    if parts: raw.append(("Partition", CH - 2 * T, D, parts, T, (CH - 2 * T) * parts))
+    if shelves_per_bay: raw.append(("Shelf", bay_w, D - 20, shelves_per_bay * bays, T, bay_w * shelves_per_bay * bays))
+    if kind == "hob":
+        dh = CH / DRAWERS
+        raw.append(("Drawer front", W - 3, dh - 3, DRAWERS, T, 2 * (W - 3 + dh - 3) * DRAWERS))
+        raw.append(("Drawer side", D - 50, dh - 80, 2 * DRAWERS, T, (D - 50) * 2 * DRAWERS))
+        raw.append(("Drawer back / inner front", bay_w - 26 - 2 * T, dh - 80, 2 * DRAWERS, T, (bay_w - 26 - 2 * T) * 2 * DRAWERS))
+        raw.append(("Drawer bottom", bay_w - 26, D - 50, DRAWERS, BACK_T, 0))
+    else:
+        raw.append(("Shutter", door_h, door_w, doors, T, 2 * (door_h + door_w) * doors))
+    raw.append(("Back", W, CH, 1, BACK_T, 0))
+    if plinth: raw.append(("Plinth", W - 40, plinth, 1, T, W - 40))
     out = []
     for name, a, b, qty, th, edge in raw:
         for pl, pw, pieces in _fit(a, b):
@@ -66,12 +94,15 @@ def nest(pcs: list[tuple[int, int]]) -> tuple[int, float]:
     return len(sheets), (area / (len(sheets) * SHEET_L * SHEET_W) if sheets else 0.0)
 
 
-def cut_list(L: float, D: float, H: float) -> dict:
-    p = panels(L, D, H)
+def cut_list(L: float, D: float, H: float, category: str | None = None) -> dict:
+    p = panels(L, D, H, category)
     by_t: dict[int, list] = {}
     for x in p: by_t.setdefault(x["thickness"], []).extend([(x["length"], x["width"])] * x["qty"])
     sheets = {}
     for th, pcs in by_t.items():
         n, util = nest(pcs); sheets[str(th)] = {"board": BOARD[th], "sheets": n, "utilisation_pct": round(util * 100, 1)}
     return {"size": {"length": L, "depth": D, "height": H}, "panels": p, "sheets": sheets,
-            "edge_band_m": round(sum(x["edge_m"] for x in p), 2), "basis": "Estimate from outer size: 18mm carcass, 8mm back, partitions every ~900mm, shelves every ~450mm, shutters ~450mm wide."}
+            "edge_band_m": round(sum(x["edge_m"] for x in p), 2), "kind": unit_kind(category, H), "category": category,
+            "basis": "Estimate from outer size: 18mm carcass, 8mm back, partitions every ~900mm, shelves every ~450mm, shutters ~450mm wide"
+                     + ("; floor unit on a 100mm plinth" if unit_kind(category, H) in ("base", "sink", "hob") else "")
+                     + ("; 3-drawer stack" if unit_kind(category, H) == "hob" else "; no shelf (sink)" if unit_kind(category, H) == "sink" else "") + "."}

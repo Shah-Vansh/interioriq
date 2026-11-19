@@ -162,6 +162,8 @@ export function ManufacturingView() {
           <p className="text-[11px] font-semibold text-stone-500 uppercase px-1 mb-2">{st} ({wos.filter(w => w.stage === st).length})</p>
           <div className="space-y-2">{wos.filter(w => w.stage === st).map(w => { const n = woNeighbours(w.stage); return <div key={w.id} data-wo={w.wo_number} className="bg-white rounded border border-stone-200 p-2 shadow-sm">
             <p className="text-[11px] font-mono text-stone-400">{w.wo_number}</p><p className="text-xs font-medium text-stone-800">{w.description}</p><p className="text-[11px] text-stone-400">unit {w.unit_no} · {Object.values(w.cut_list.sheets).map(s => `${s.sheets} sh`).join(' + ')}</p>
+            <div className="flex gap-1 mt-1"><button onClick={() => a.run('sd' + w.id, () => downloadFile(`/work-orders/${w.id}/shop-drawing.pdf`, `shop-drawing-${w.wo_number}.pdf`))} className={btn.small} aria-label={`Shop drawing PDF ${w.wo_number}`}><Download className="w-3 h-3" />Drawing</button>
+              <button onClick={() => a.run('sx' + w.id, () => downloadFile(`/work-orders/${w.id}/shop-drawing.dxf`, `shop-drawing-${w.wo_number}.dxf`))} className={btn.small} aria-label={`Shop drawing DXF ${w.wo_number}`}>DXF</button></div>
             {can && <div className="flex justify-between mt-1.5">
               <button disabled={!n.prev || !!a.busy} onClick={() => n.prev && move(w, n.prev)} className={btn.small} aria-label={`Back ${w.wo_number}`}><ArrowLeft className="w-3 h-3" /></button>
               <button disabled={!n.next || !!a.busy} onClick={() => n.next && move(w, n.next)} className={btn.small} aria-label={`Advance ${w.wo_number}`}>{n.next ?? 'done'}<ArrowRight className="w-3 h-3" /></button></div>}

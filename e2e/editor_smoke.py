@@ -29,6 +29,7 @@ with sync_playwright() as p:
     page.goto(f"{WEB}/design/3d"); page.wait_for_url("**/login", timeout=15000); check("unauthenticated -> /login", True)
     page.fill("input[type=password]", "ChangeMe123!"); page.click("button:has-text('Sign in')"); page.wait_for_url("**/dashboard")
     page.goto(f"{WEB}/design/3d"); page.wait_for_selector("canvas", timeout=30000); page.wait_for_timeout(2500)
+    page.get_by_role("button", name="Realistic").click(); page.wait_for_timeout(1500)     # pixel-exact drag checks run on the quick box view (software GL in CI is slow)
     check("saved design loads and validates", page.get_by_text("Objects (2)").count() == 1 and page.locator("text=/Valid · /").count() == 1)
 
     page.click("button:has-text('Top')"); page.wait_for_timeout(1200)

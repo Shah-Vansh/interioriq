@@ -69,7 +69,7 @@ def board_need(db: Session, boq: m.Boq) -> dict:
     for r in lines(db, boq):
         if r["kind"] != "MANUFACTURED": continue
         L, W, H = r["size"]
-        for p in cutting.panels(L, W, H):
+        for p in cutting.panels(L, W, H, r.get("category")):
             pcs[p["thickness"]].extend([(p["length"], p["width"])] * (p["qty"] * r["qty"])); edge += p["edge_m"] * r["qty"]
     return {"sheets": {th: cutting.nest(v)[0] for th, v in pcs.items()}, "edge_band_m": round(edge, 2)}
 
