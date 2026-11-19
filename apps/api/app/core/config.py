@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = ""             # e.g. sqla+sqlite:///./celery-broker.db (free, no server) · sqla+postgresql://… · redis://localhost:6379/0
     OCR_STALE_MINUTES: int = 30             # a document 'reading' longer than this is treated as dead and can be re-read
     EMAIL_STALE_MINUTES: int = 10           # an email 'sending' longer than this goes back to the queue
+    # M24: backups (ZIP: every table as JSON + the uploads folder + a checksummed manifest); restore works into SQLite OR Postgres
+    BACKUP_DIR: str = "../../backups"       # keep it OUTSIDE the web root; with several servers use a shared/network folder
+    BACKUP_DAILY: bool = True               # one automatic backup per (company-local) day, after BACKUP_HOUR
+    BACKUP_HOUR: int = 2                    # local hour (COMPANY_UTC_OFFSET_MIN) after which the daily backup runs
+    BACKUP_KEEP: int = 14                   # automatic backups kept (older ones deleted); manual and uploaded backups are never auto-deleted
     COMPANY_UTC_OFFSET_MIN: int = 330     # local time for "today"/"overdue" (India = +5:30). A fixed offset: Windows often lacks tz data            # background email sender (tests turn it off and drive the outbox directly)   # used in messages to link clients to their portal
     PDF_FONT_PATH: str = ""               # optional .ttf with the glyphs you need (e.g. Gujarati/Hindi); default is built-in Helvetica (Latin only)
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]

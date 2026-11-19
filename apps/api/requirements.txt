@@ -19,4 +19,4 @@ celery                    # optional background workers (TASK_BACKEND=celery); u
 # paddleocr                  -> preferred OCR engine when installed
 # ultralytics               -> YOLO detection
 # sentence-transformers     -> local embeddings for RAG
-# psycopg2-binary + pgvector -> Postgres (set DATABASE_URL)
+# psycopg[binary]           -> Postgres (DATABASE_URL=postgresql+psycopg://user:pass@host/db) — see docs/DEPLOYMENT.md

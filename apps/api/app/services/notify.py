@@ -53,6 +53,22 @@ VARIABLES = {"QUOTATION": ["client", "company", "project", "quotation_no", "amou
              "HANDOVER": ["client", "company", "project", "date", "received_by", "warranty"],
              "PAYMENT": ["client", "company", "project", "amount", "date", "mode", "reference_text", "balance"]}
 
+# M25 follow-up reminders: templates only (they are not documents — no Send drawer, no attachment)
+FOLLOWUP_KINDS = ["FOLLOWUP_REMINDER", "FOLLOWUP_DIGEST", "FOLLOWUP_WHATSAPP"]
+DEFAULTS.update({
+    "FOLLOWUP_REMINDER": ("Reminder: $kind with $lead at $due",
+                          "Hi $name,\n\n$kind with $lead is due at $due.\nPhone: $phone\nStage: $stage\nNote: $note\n\nWhatsApp the lead: $whatsapp_link\n"
+                          "Record the outcome: $app_url\n\n— $company"),
+    "FOLLOWUP_DIGEST": ("Your follow-ups for $date: $overdue_count overdue, $today_count today",
+                        "Hi $name,\n\nHere are your follow-ups for $date.\n\n$items\n\nOpen your list and record the outcomes: $app_url\n\n— $company"),
+    "FOLLOWUP_WHATSAPP": ("WhatsApp message to the lead",
+                          "Hello $lead, this is $user from $company. I'm following up about your interior project — is this a good time to talk?"),
+})
+VARIABLES.update({"FOLLOWUP_REMINDER": ["name", "lead", "kind", "due", "phone", "stage", "note", "whatsapp_link", "app_url", "company"],
+                  "FOLLOWUP_DIGEST": ["name", "date", "overdue_count", "today_count", "items", "app_url", "company"],
+                  "FOLLOWUP_WHATSAPP": ["lead", "user", "company", "kind", "due"]})
+TEMPLATE_KINDS = KINDS + FOLLOWUP_KINDS
+
 
 class NotifyError(Exception):
     def __init__(self, status: int, detail: str): self.status, self.detail = status, detail
@@ -70,7 +86,7 @@ def sender_address(company_name: str) -> str:
 
 def templates(db: Session) -> dict:
     out = {}
-    for k in KINDS:
+    for k in TEMPLATE_KINDS:
         row = db.get(m.CompanySetting, f"tpl:{k}")
         s, b = DEFAULTS[k]
         out[k] = {"subject": (row.value or {}).get("subject", s) if row else s, "body": (row.value or {}).get("body", b) if row else b,

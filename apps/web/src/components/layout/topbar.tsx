@@ -16,7 +16,7 @@ const LABELS: Record<string, string> = {
   execution: 'Execution', procurement: 'Procurement', po: 'Purchase Orders', inventory: 'Inventory',
   manufacturing: 'Manufacturing', cutting: 'Cutting Lists', delivery: 'Delivery', installation: 'Installation', qc: 'Quality Control',
   'client-portal': 'Client Portal', finance: 'Finance', payables: 'Payables', reports: 'Reports', revenue: 'Revenue', profitability: 'Profitability',
-  settings: 'Settings', notifications: 'Notifications', company: 'Company', users: 'Users', roles: 'Roles', system: 'System',
+  settings: 'Settings', notifications: 'Notifications', company: 'Company', users: 'Users', roles: 'Roles', system: 'System', backups: 'Backups',
 }
 const AI_LABEL: Record<string, string> = { design: 'AI Designer', reports: 'AI Project Manager', settings: 'AI Engines' }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-/i

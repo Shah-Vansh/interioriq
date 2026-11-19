@@ -216,7 +216,7 @@ def _ollama():
 
 @router.get("/settings/system")
 def system(db: Session = Depends(get_db), user: dict = Depends(require_roles(*ADMINS))):
-    url = settings.DATABASE_URL; kind = url.split(":", 1)[0]
+    url = settings.DATABASE_URL; kind = engine.dialect.name                 # sqlite | postgresql
     size = None
     if kind == "sqlite":
         path = url.replace("sqlite:///", "", 1)

@@ -108,7 +108,9 @@ with sync_playwright() as p:
     # automatic payment receipt
     page.goto(f"{WEB}/settings/notifications"); page.wait_for_selector("[data-testid=auto-switches]")
     sw = page.get_by_role("switch", name="Email a payment receipt when a payment is recorded")
-    if sw.get_attribute("aria-checked") != "true": sw.click(); page.wait_for_timeout(800)
+    if sw.get_attribute("aria-checked") != "true": sw.click()
+    try: page.wait_for_function("() => document.querySelector('[role=switch][aria-label=\"Email a payment receipt when a payment is recorded\"]')?.getAttribute('aria-checked') === 'true'", timeout=15000)
+    except Exception: pass
     check("automatic payment receipt switched on", sw.get_attribute("aria-checked") == "true")
     c.post(f"{API}/boqs/{boq['id']}/status", json={"status": "APPROVED"}, headers=H)
     page.goto(f"{WEB}/projects/{pid}"); page.get_by_role("button", name="Record payment").click(); dd = page.get_by_role("dialog", name="Record payment")

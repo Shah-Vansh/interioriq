@@ -1,12 +1,12 @@
 'use client'
 // Lead ownership + follow-ups: badge on cards, owner/follow-up section in the lead drawer, "why lost?" dialog, and CRM → Follow-ups.
 import { useEffect, useRef, useState } from 'react'
-import { CalendarClock, Check, Loader2, Plus, X } from 'lucide-react'
+import { BellRing, CalendarClock, Check, Loader2, MessageCircle, Plus, X } from 'lucide-react'
 import { api } from '@/lib/api'
 import { Alert, btn, ctl, Drawer, Empty, Field, hasRole, input, PageHeader, Pill, useAction, useLoad, useRole } from '@/components/ui/kit'
 
 export interface FollowUp { id: string; lead_id: string; kind: string; due_at: string; note: string | null; assigned_to: string | null; assigned_name: string | null
-  status: 'OPEN' | 'DONE' | 'CANCELLED'; outcome: string | null; closed_by: string | null; closed_at: string | null; bucket: string; lead_name?: string; lead_phone?: string | null; lead_stage?: string; lead_city?: string | null }
+  status: 'OPEN' | 'DONE' | 'CANCELLED'; outcome: string | null; closed_by: string | null; closed_at: string | null; bucket: string; reminded_at?: string | null; lead_name?: string; lead_phone?: string | null; lead_stage?: string; lead_city?: string | null }
 export interface CrmMeta { stages: string[]; lost_reasons: string[]; follow_up_kinds: string[]; assignable: { id: string; name: string; role: string }[] }
 const WRITE = ['ADMIN', 'PROJECT_MANAGER', 'SALES']
 const KIND_LABEL: Record<string, string> = { CALL: 'Call', VISIT: 'Site visit', MEETING: 'Meeting', WHATSAPP: 'WhatsApp', EMAIL: 'Email', OTHER: 'Other' }
@@ -34,6 +34,7 @@ export function LeadFollowUps({ lead, followUps, onChanged }: { lead: { id: stri
   const { data: meta } = useLoad<CrmMeta>('/crm/meta')
   const [f, setF] = useState({ due: localInput(24), kind: 'CALL', note: '', assignee: '' })
   const [doing, setDoing] = useState<FollowUp | null>(null)
+  const [wa, setWa] = useState<{ fu: FollowUp; target: WaTarget } | null>(null)
   const a = useAction()
   const closed = lead.archived || lead.stage === 'LOST' || lead.stage === 'WON'
   const assign = (uid: string) => a.run('assign', async () => { await api.post(`/leads/${lead.id}/assign`, { user_id: uid || null }); onChanged() })
@@ -50,6 +51,7 @@ export function LeadFollowUps({ lead, followUps, onChanged }: { lead: { id: stri
           <ul className="space-y-1.5" data-testid="open-followups">{open.map(x => <li key={x.id} data-followup={x.kind} className="flex items-start gap-2 text-xs">
             <Pill s={x.bucket === 'OVERDUE' ? 'FAIL' : x.bucket === 'TODAY' ? 'PART' : 'SENT'} label={x.bucket === 'OVERDUE' ? 'overdue' : x.bucket === 'TODAY' ? 'today' : 'upcoming'} />
             <span className="flex-1"><b>{KIND_LABEL[x.kind]}</b> · {when(x.due_at)}{x.assigned_name ? ` · ${x.assigned_name}` : ''}{x.note && <span className="block text-stone-500">{x.note}</span>}</span>
+            {can && <WhatsAppButtons fu={x} onWa={setWa} />}
             {can && <button onClick={() => setDoing(x)} className={btn.small} aria-label={`Done ${KIND_LABEL[x.kind]}`}><Check className="w-3 h-3" />Done</button>}</li>)}</ul>}
       </div>
       {can && !closed && <form onSubmit={add} className="grid grid-cols-2 gap-2">
@@ -62,8 +64,41 @@ export function LeadFollowUps({ lead, followUps, onChanged }: { lead: { id: stri
       {past.length > 0 && <details className="text-xs"><summary className="cursor-pointer text-stone-500">{past.length} earlier follow-up(s)</summary>
         <ul className="mt-1 space-y-1">{past.map(x => <li key={x.id} className="text-stone-600"><b>{KIND_LABEL[x.kind]}</b> {when(x.due_at)} — {x.status === 'DONE' ? 'done' : 'cancelled'}: {x.outcome}</li>)}</ul></details>}
       {doing && <DoneDialog fu={doing} meta={meta} stage={lead.stage} converted={!!lead.project_id} onClose={() => setDoing(null)} onSaved={() => { setDoing(null); onChanged() }} />}
+      {wa && <WhatsAppDialog fu={wa.fu} target={wa.target} onClose={() => setWa(null)} onSent={() => { setWa(null); onChanged() }} />}
     </div>
   )
+}
+
+type WaTarget = 'LEAD' | 'ASSIGNEE'
+
+/** WhatsApp to the lead, and a WhatsApp reminder to the person doing it (free click-to-chat links). */
+function WhatsAppButtons({ fu, onWa }: { fu: FollowUp; onWa: (v: { fu: FollowUp; target: WaTarget }) => void }) {
+  return <>
+    <button onClick={() => onWa({ fu, target: 'LEAD' })} className={btn.small} aria-label={`WhatsApp ${fu.lead_name ?? 'the lead'}`} title="WhatsApp the lead"><MessageCircle className="w-3 h-3 text-green-700" />WhatsApp</button>
+    {fu.assigned_to && <button onClick={() => onWa({ fu, target: 'ASSIGNEE' })} className={btn.small} aria-label={`Remind ${fu.assigned_name ?? 'assignee'} on WhatsApp`} title={`Send ${fu.assigned_name ?? 'them'} a reminder on WhatsApp`}><BellRing className="w-3 h-3" />Remind</button>}
+  </>
+}
+
+interface WaDraft { target: WaTarget; name: string; phone: string | null; text: string; problem: string | null }
+
+export function WhatsAppDialog({ fu, target, onClose, onSent }: { fu: FollowUp; target: WaTarget; onClose: () => void; onSent: () => void }) {
+  const { data: d, error } = useLoad<WaDraft>(`/followups/${fu.id}/whatsapp?target=${target}`)
+  const [phone, setPhone] = useState(''); const [text, setText] = useState(''); const a = useAction()
+  useEffect(() => { if (d) { setPhone(d.phone ?? ''); setText(d.text) } }, [d])
+  const open = () => a.run('wa', async () => {
+    const r = await api.post<{ whatsapp_url: string }>(`/followups/${fu.id}/whatsapp`, { target, phone: phone.trim() || undefined, text })
+    window.open(r.whatsapp_url, '_blank', 'noopener'); onSent() })
+  return <Drawer label="WhatsApp" title={target === 'LEAD' ? `WhatsApp ${d?.name ?? fu.lead_name ?? 'the lead'}` : `Remind ${d?.name ?? fu.assigned_name ?? ''} on WhatsApp`} onClose={onClose}>
+    {error && <Alert>{error}</Alert>}
+    {!d ? <Empty>Loading…</Empty> : <>
+      {d.problem && !phone && <p className="text-xs text-amber-800 bg-amber-50 rounded px-2 py-1.5" data-testid="wa-problem">{d.problem}</p>}
+      <Field label="WhatsApp number"><input aria-label="WhatsApp number" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+91 98765 43210" className={input} /></Field>
+      <Field label="Message"><textarea aria-label="WhatsApp message" rows={target === 'LEAD' ? 4 : 10} value={text} onChange={e => setText(e.target.value)} className={input} /></Field>
+      <p className="text-[11px] text-stone-500">WhatsApp opens with this message typed — press send there. Free: no WhatsApp Business account needed. Logged on the lead.</p>
+      {a.error && <Alert>{a.error}</Alert>}
+      <button onClick={open} disabled={!phone.trim() || !text.trim() || !!a.busy} className={btn.primary + ' w-full py-2'}>{a.busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageCircle className="w-3.5 h-3.5" />}Open WhatsApp</button>
+    </>}
+  </Drawer>
 }
 
 export function DoneDialog({ fu, meta, stage, converted, onClose, onSaved }: { fu: FollowUp; meta: CrmMeta | null | undefined; stage: string; converted: boolean; onClose: () => void; onSaved: () => void }) {
@@ -106,6 +141,7 @@ export function FollowUpsView() {
   const { data, reload, error } = useLoad<{ items: FollowUp[]; counts: Record<string, number> }>(`/followups?scope=${scope}&when=${tab}`)
   const { data: meta } = useLoad<CrmMeta>('/crm/meta')
   const [doing, setDoing] = useState<FollowUp | null>(null)
+  const [wa, setWa] = useState<{ fu: FollowUp; target: WaTarget } | null>(null)
   const first = useRef(true)   // only on the first load: nothing today but something overdue → open Overdue
   useEffect(() => { if (!data || !first.current) return; first.current = false; if (data.counts.TODAY === 0 && data.counts.OVERDUE > 0) setTab('overdue') }, [data])
   const T = (k: typeof tab, l: string, n?: number) => <button role="tab" aria-selected={tab === k} onClick={() => setTab(k)} className={`px-3 py-1.5 text-sm rounded ${tab === k ? 'bg-white shadow-sm font-medium' : 'text-stone-500'}`}>
@@ -122,9 +158,12 @@ export function FollowUpsView() {
           <div className="w-28 shrink-0 text-xs"><p className={x.bucket === 'OVERDUE' ? 'text-red-700 font-semibold' : 'text-stone-700'}>{when(x.due_at)}</p><p className="text-stone-400">{KIND_LABEL[x.kind]}</p></div>
           <div className="flex-1 text-sm"><p className="font-medium text-stone-900">{x.lead_name}{x.lead_phone && <a href={`tel:${x.lead_phone}`} className="ml-2 text-xs text-amber-700 hover:underline">{x.lead_phone}</a>}</p>
             <p className="text-xs text-stone-500">{x.lead_stage?.replace('_', ' ').toLowerCase()}{x.lead_city ? ` · ${x.lead_city}` : ''}{x.assigned_name ? ` · ${x.assigned_name}` : ''}</p>
-            {x.note && <p className="text-xs text-stone-600 mt-0.5">{x.note}</p>}{x.outcome && <p className="text-xs text-green-800 mt-0.5">Outcome: {x.outcome}</p>}</div>
+            {x.note && <p className="text-xs text-stone-600 mt-0.5">{x.note}</p>}{x.outcome && <p className="text-xs text-green-800 mt-0.5">Outcome: {x.outcome}</p>}
+            {x.status === 'OPEN' && x.reminded_at && <p className="text-[11px] text-stone-400 mt-0.5" data-testid="reminded">Reminder emailed {when(x.reminded_at)}</p>}</div>
+          {can && x.status === 'OPEN' && <div className="flex gap-1.5 flex-wrap justify-end"><WhatsAppButtons fu={x} onWa={setWa} /></div>}
           {can && x.status === 'OPEN' && <button onClick={() => setDoing(x)} className={btn.small} aria-label={`Done with ${x.lead_name}`}><Check className="w-3 h-3" />Done</button>}</li>)}</ul>}</div>
       {doing && <DoneDialog fu={doing} meta={meta} stage={doing.lead_stage ?? 'NEW'} converted={false} onClose={() => setDoing(null)} onSaved={() => { setDoing(null); reload() }} />}
+      {wa && <WhatsAppDialog fu={wa.fu} target={wa.target} onClose={() => setWa(null)} onSent={() => setWa(null)} />}
     </div>
   )
 }

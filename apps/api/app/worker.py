@@ -63,6 +63,8 @@ def sweep(token: str):
                    if d.created_at is None or (d.created_at.replace(tzinfo=now.tzinfo) if d.created_at.tzinfo is None else d.created_at) < now - timedelta(minutes=2)]
         for i in waiting: ocr_document.delay(i)
         jobs.stale_documents(db, now)
+        from app.services import reminders
+        reminders.tick(db)                                                      # follow-up reminders (claimed: one sender)
     except Exception:
         log.exception("sweep failed")
     finally:

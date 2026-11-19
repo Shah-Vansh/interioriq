@@ -36,10 +36,10 @@ export class ApiError extends Error {
 const unreachable = (base: string) =>
   `Cannot reach the API at ${base}. Start the backend (cd apps/api && uvicorn app.main:app --reload). If it is running, open this site at http://localhost:3000 — other addresses can be blocked by the browser.`
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, timeoutMs?: number): Promise<T> {
   const token = session.token(); const base = apiBase()
   const isUpload = init.body instanceof FormData
-  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), isUpload ? 120_000 : 20_000)   // a hung request must end, not spin forever
+  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), timeoutMs ?? (isUpload ? 120_000 : 20_000))   // a hung request must end, not spin forever
   let res: Response
   try {
     res = await fetch(`${base}/api${path}`, {
@@ -74,7 +74,9 @@ export const api = {
   put: <T,>(p: string, body?: unknown) => request<T>(p, { method: 'PUT', body: JSON.stringify(body ?? {}) }),
   patch: <T,>(p: string, body?: unknown) => request<T>(p, { method: 'PATCH', body: JSON.stringify(body ?? {}) }),
   delete: <T,>(p: string) => request<T>(p, { method: 'DELETE' }),
-  upload: <T,>(p: string, form: FormData) => request<T>(p, { method: 'POST', body: form }),
+  upload: <T,>(p: string, form: FormData, timeoutMs?: number) => request<T>(p, { method: 'POST', body: form }, timeoutMs),
+  /** long-running POST (backups, restores): 10 minutes instead of 20 s */
+  postLong: <T,>(p: string, body?: unknown) => request<T>(p, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) }, 600_000),
   /** Is the backend reachable from this browser tab? (4s limit) */
   health: async (): Promise<boolean> => {
     const c = new AbortController(); const t = setTimeout(() => c.abort(), 4000)

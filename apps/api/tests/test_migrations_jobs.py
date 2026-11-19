@@ -18,7 +18,7 @@ from app.models import models as m
 from app.services import documents as docs, flow, jobs, notify
 
 API_DIR = Path(__file__).resolve().parents[1]
-HEAD = "0002"
+HEAD = "0004"
 
 
 def rev(eng):
@@ -195,7 +195,7 @@ def test_real_celery_worker_reads_a_document_and_sends_an_email(client, tmp_path
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _SMTP); port = srv.server_address[1]
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    broker = f"sqla+sqlite:///{(tmp_path / 'broker.db').as_posix()}"
+    broker = os.environ.get("IQ_TEST_BROKER") or f"sqla+sqlite:///{(tmp_path / 'broker.db').as_posix()}"
     env = {**os.environ, "DATABASE_URL": settings.DATABASE_URL, "STORAGE_PATH": settings.STORAGE_PATH, "TASK_BACKEND": "celery", "CELERY_BROKER_URL": broker,
            "SMTP_HOST": "127.0.0.1", "SMTP_PORT": str(port), "SMTP_SECURITY": "none", "SMTP_FROM": "Studio <studio@iq.test>", "PYTHONIOENCODING": "utf-8"}
     log = open(tmp_path / "worker.log", "w")

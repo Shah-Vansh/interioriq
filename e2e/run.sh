@@ -16,6 +16,8 @@ if [ "$API_PORT" != "8000" ]; then export NEXT_PUBLIC_API_URL="http://localhost:
 
 # CELERY=1 bash e2e/run.sh: background jobs (OCR, email) go to a real Celery worker on a free database broker (sqla+sqlite), started here.
 export TASK_BACKEND=thread IQ_TASK_BACKEND=thread
+# uploads + backups of the test run go to throwaway folders, never the real storage/ or backups/
+TMPD=$(mktemp -d); export STORAGE_PATH="$TMPD/storage" BACKUP_DIR="$TMPD/backups" BACKUP_DAILY=false
 if [ "$CELERY" = "1" ]; then export TASK_BACKEND=celery IQ_TASK_BACKEND=celery CELERY_BROKER_URL=sqla+sqlite:///./e2e-broker.db; rm -f "$ROOT/apps/api/e2e-broker.db"; fi
 cd "$ROOT/apps/api"
 SMTP_HOST=127.0.0.1 SMTP_PORT=2525 SMTP_SECURITY=none SMTP_FROM="InteriorIQ Studio <studio@interioriq.test>" DATABASE_URL=sqlite:///./e2e.db python3 -m uvicorn app.main:app --port $API_PORT >/tmp/iq_api.log 2>&1 &  API=$!
@@ -27,7 +29,7 @@ if [ "$CELERY" = "1" ]; then
 fi
 cd "$ROOT/apps/web"
 node node_modules/next/dist/bin/next start -p $WEB_PORT >/tmp/iq_web.log 2>&1 &  WEB=$!      # the real server process, not an npx wrapper, so cleanup really stops it
-restore() { kill $API $WEB $WK 2>/dev/null; rm -f "$ROOT/apps/api/e2e.db" "$ROOT/apps/api/e2e-broker.db"
+restore() { kill $API $WEB $WK 2>/dev/null; rm -f "$ROOT/apps/api/e2e.db" "$ROOT/apps/api/e2e-broker.db"; rm -rf "$TMPD"
   if [ -n "$NEXT_PUBLIC_API_URL" ]; then echo "Rebuilding the web app for the normal API address..."; (cd "$ROOT/apps/web" && unset NEXT_PUBLIC_API_URL && npm run build >/tmp/iq_build.log 2>&1); fi; }
 trap restore EXIT
 
@@ -36,4 +38,4 @@ export IQ_API="http://localhost:$API_PORT/api" IQ_WEB="http://localhost:$WEB_POR
 if [ "$CELERY" = "1" ]; then   # Celery mode: the suites whose work runs in the background
   python3 "$ROOT/e2e/jobs_smoke.py" && python3 "$ROOT/e2e/documents_smoke.py" && python3 "$ROOT/e2e/notifications_smoke.py"; exit $?
 fi
-python3 "$ROOT/e2e/login_smoke.py" && python3 "$ROOT/e2e/jobs_smoke.py" && python3 "$ROOT/e2e/editor_smoke.py" && python3 "$ROOT/e2e/documents_smoke.py" && python3 "$ROOT/e2e/estimation_smoke.py" && python3 "$ROOT/e2e/crm_smoke.py" && python3 "$ROOT/e2e/catalogue_smoke.py" && python3 "$ROOT/e2e/operations_smoke.py" && python3 "$ROOT/e2e/invoices_smoke.py" && python3 "$ROOT/e2e/notifications_smoke.py" && python3 "$ROOT/e2e/profit_smoke.py" && python3 "$ROOT/e2e/payables_smoke.py" && python3 "$ROOT/e2e/takeoff_smoke.py" && python3 "$ROOT/e2e/openings_smoke.py" && python3 "$ROOT/e2e/followups_smoke.py" && python3 "$ROOT/e2e/layouts_smoke.py" && python3 "$ROOT/e2e/team_smoke.py"
+python3 "$ROOT/e2e/login_smoke.py" && python3 "$ROOT/e2e/jobs_smoke.py" && python3 "$ROOT/e2e/editor_smoke.py" && python3 "$ROOT/e2e/documents_smoke.py" && python3 "$ROOT/e2e/estimation_smoke.py" && python3 "$ROOT/e2e/crm_smoke.py" && python3 "$ROOT/e2e/catalogue_smoke.py" && python3 "$ROOT/e2e/operations_smoke.py" && python3 "$ROOT/e2e/invoices_smoke.py" && python3 "$ROOT/e2e/notifications_smoke.py" && python3 "$ROOT/e2e/profit_smoke.py" && python3 "$ROOT/e2e/payables_smoke.py" && python3 "$ROOT/e2e/takeoff_smoke.py" && python3 "$ROOT/e2e/openings_smoke.py" && python3 "$ROOT/e2e/followups_smoke.py" && python3 "$ROOT/e2e/reminders_smoke.py" && python3 "$ROOT/e2e/layouts_smoke.py" && python3 "$ROOT/e2e/team_smoke.py" && python3 "$ROOT/e2e/backups_smoke.py"

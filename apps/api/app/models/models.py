@@ -79,6 +79,7 @@ class LeadFollowUp(Base):
     closed_by = Column(String); closed_at = Column(DateTime(timezone=True))
     created_by = Column(String)
     created_at = Column(DateTime(timezone=True), default=_now)
+    reminded_at = Column(DateTime(timezone=True))   # M25: when the "due soon" reminder was claimed (cleared when rescheduled/reassigned)
 
 
 class LeadActivity(Base):
@@ -434,6 +435,15 @@ class ProjectMember(Base):
     user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
     added_by = Column(String)
     created_at = Column(DateTime(timezone=True), default=_now)
+
+
+class JobLock(Base):
+    """M24: named schedule claims (e.g. 'auto_backup' = the local date of the last automatic backup). A conditional UPDATE on this row is
+    how several API servers agree that exactly one of them runs a scheduled job."""
+    __tablename__ = "job_locks"
+    name = Column(String, primary_key=True)
+    value = Column(String)
+    updated_at = Column(DateTime(timezone=True), default=_now)
 
 
 class CompanySetting(Base):

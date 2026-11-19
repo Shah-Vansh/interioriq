@@ -8,7 +8,7 @@ from app.core.database import get_db
 from app.core.security import require_roles
 from app.models import models as m
 from app.services import access
-from app.services import company as companylib, flow, notify
+from app.services import company as companylib, flow, followups as fups, notify
 
 router = APIRouter(tags=["Notifications"])
 STAFF = tuple(r for r in m.ROLES if r not in ("CLIENT", "SUPER_ADMIN"))
@@ -92,11 +92,12 @@ def send(b: SendIn, db: Session = Depends(get_db), user: dict = Depends(require_
 
 
 @router.get("/messages")
-def messages(project_id: str | None = None, ref_id: str | None = None, status: str | None = None, limit: int = 200, db: Session = Depends(get_db), user: dict = Depends(require_roles(*STAFF))):
+def messages(project_id: str | None = None, ref_id: str | None = None, status: str | None = None, kind: str | None = None, limit: int = 200, db: Session = Depends(get_db), user: dict = Depends(require_roles(*STAFF))):
     q = access.scope(db.query(m.Message), m.Message.project_id, db, user)
     if project_id: q = q.filter_by(project_id=project_id)
     if ref_id: q = q.filter_by(ref_id=ref_id)
     if status: q = q.filter_by(status=status)
+    if kind: q = q.filter(m.Message.kind.in_([k.strip().upper() for k in kind.split(",") if k.strip()]))
     return [msg_out(x) for x in q.order_by(m.Message.created_at.desc()).limit(max(1, min(limit, 1000)))]
 
 
@@ -146,7 +147,7 @@ class TemplateIn(BaseModel):
 
 @router.put("/notifications/templates/{kind}")
 def put_template(kind: str, b: TemplateIn, db: Session = Depends(get_db), user: dict = Depends(require_roles(*ADMIN))):
-    if kind not in notify.KINDS: raise HTTPException(404, "Unknown template")
+    if kind not in notify.TEMPLATE_KINDS: raise HTTPException(404, "Unknown template")
     import re
     unknown = sorted(set(re.findall(r"\$\{?([a-z_]+)\}?", b.subject + " " + b.body)) - set(notify.VARIABLES[kind]))
     if unknown: raise HTTPException(422, f"Unknown placeholder(s): {', '.join('$' + u for u in unknown)}. Allowed: {', '.join('$' + v for v in notify.VARIABLES[kind])}")
@@ -158,10 +159,43 @@ def put_template(kind: str, b: TemplateIn, db: Session = Depends(get_db), user: 
 
 @router.delete("/notifications/templates/{kind}")
 def reset_template(kind: str, db: Session = Depends(get_db), user: dict = Depends(require_roles(*ADMIN))):
-    if kind not in notify.KINDS: raise HTTPException(404, "Unknown template")
+    if kind not in notify.TEMPLATE_KINDS: raise HTTPException(404, "Unknown template")
     row = db.get(m.CompanySetting, f"tpl:{kind}")
     if row: db.delete(row); db.commit()
     return notify.templates(db)[kind]
+
+
+# ── M25 follow-up reminders ────────────────────────────────────────────────────
+def _reminders_out(db: Session) -> dict:
+    from app.services import reminders
+    users = db.query(m.User).filter(m.User.is_active.isnot(False), m.User.role.in_(fups.ASSIGNABLE)).order_by(m.User.full_name).all()
+    log = db.query(m.Message).filter(m.Message.kind.in_(notify.FOLLOWUP_KINDS)).order_by(m.Message.created_at.desc()).limit(20).all()
+    return {**reminders.get(db), "before_choices": reminders.BEFORE_CHOICES, "email_ready": notify.email_ready(),
+            "timezone_offset_min": settings.COMPANY_UTC_OFFSET_MIN,
+            "people": [{"id": u.id, "name": u.full_name, "email": u.email, "phone": u.phone, "role": u.role} for u in users],
+            "log": [msg_out(x) for x in log]}
+
+
+@router.get("/notifications/followup-reminders")
+def get_reminders(db: Session = Depends(get_db), user: dict = Depends(require_roles(*STAFF))):
+    return _reminders_out(db)
+
+
+@router.put("/notifications/followup-reminders")
+def put_reminders(body: dict, db: Session = Depends(get_db), user: dict = Depends(require_roles(*ADMIN))):
+    from app.services import reminders
+    try: reminders.save(db, body, user.get("name"))
+    except ValueError as e: raise HTTPException(422, str(e))
+    return _reminders_out(db)
+
+
+@router.post("/notifications/followup-reminders/run")
+def run_reminders(db: Session = Depends(get_db), user: dict = Depends(require_roles(*ADMIN))):
+    """Send what is due right now: 'due soon' reminders, and today's morning summary if it hasn't gone out yet (even before the set hour)."""
+    from app.services import reminders
+    if not reminders.get(db)["enabled"]: raise HTTPException(409, "Follow-up reminders are switched off — switch them on first")
+    out = {"due_soon": reminders.send_due(db), "digests": reminders.send_digests(db, force=True)}
+    return {**out, "digest_already_sent": out["digests"] is None and reminders.get(db)["digest"], **_reminders_out(db)}
 
 
 @router.put("/notifications/auto")

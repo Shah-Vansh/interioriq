@@ -4,7 +4,7 @@ A local, zero-cost platform for turnkey interior projects: lead → survey → d
 manufacturing → delivery → installation → QC → handover, on real data.
 
 **Highlights**
-- CRM with lead follow-ups, client portal, project teams and role-based access
+- CRM with lead follow-ups (email + WhatsApp reminders), client portal, project teams and role-based access
 - Room survey with OCR of drawings (PDF text layer / RapidOCR), doors & windows
 - Rule-based layouts for bedroom, living, dining, kitchen (sink, hob, wall cabinets, fillers) and study, validated with Shapely
 - 3D editor (React Three Fiber), DXF drawings (plan, ceiling, electrical, elevations)
@@ -25,6 +25,9 @@ The database schema is migrated automatically on start (`alembic upgrade head`).
 
 Background jobs (OCR, email) run inside the API by default. For several servers set `TASK_BACKEND=celery` and
 `CELERY_BROKER_URL` in `.env`, then start a worker: `cd apps/api && celery -A app.worker worker --loglevel=info` (Windows: add `--pool=solo`).
+
+Deploying with Postgres, several servers, a domain, and backups: see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Backups: Settings → Backups, or `python -m app.backup create|verify|restore` (from `apps/api`).
 
 ## Tests
     cd apps/api && python -m pytest -q        # backend

@@ -75,5 +75,6 @@ export const navigation: NavItem[] = [
     { label:'Roles',        href:'/settings/roles',    icon:'Shield'    },
     { label:'AI Providers', href:'/settings/ai',       icon:'Cpu',      badge:'Local', badgeColor:'green' },
     { label:'System',       href:'/settings/system',   icon:'Terminal'  },
+    { label:'Backups',      href:'/settings/backups',  icon:'DatabaseBackup' },
   ]},
 ]

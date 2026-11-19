@@ -104,18 +104,23 @@ def seed():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     seed()
+    from app.services import backup as bk
+    bk.start_scheduler(SessionLocal)                     # one automatic backup per local day (claimed, so once across several servers)
     if settings.NOTIFY_WORKER and not jobs.celery_on():
         from app.services.notify import start_worker
         start_worker(SessionLocal)
+        from app.services import reminders
+        reminders.start_scheduler(SessionLocal)      # follow-up reminders (off until switched on; claims make several servers safe)
     yield
 
 from app.routers.team import router as team_router
+from app.routers.backups import router as backups_router
 from app.services import access, jobs
 app = FastAPI(title="InteriorIQ API", version="0.2.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.ALLOWED_ORIGINS, allow_origin_regex=settings.ALLOWED_ORIGIN_REGEX, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 # M22: every route passes the project-access guard (a no-op unless 'Limit staff to their projects' is on)
 for _r in (router, documents_router, estimation_router, crm_router, catalogue_router, operations_router, insights_router, admin_router, portal_router, drawings_router,
-           invoices_router, notifications_router, profit_router, payables_router, takeoff_router, openings_router, team_router):
+           invoices_router, notifications_router, profit_router, payables_router, takeoff_router, openings_router, team_router, backups_router):
     app.include_router(_r, prefix="/api", dependencies=[Depends(access.guard)])
 
 @app.exception_handler(IntegrityError)

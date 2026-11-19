@@ -274,7 +274,7 @@ def archive(lid: str, b: ArchiveIn, db: Session = Depends(get_db), user: dict = 
 def fu_out(f: m.LeadFollowUp, users: dict, lead: m.Lead | None = None) -> dict:
     out = {"id": f.id, "lead_id": f.lead_id, "kind": f.kind, "due_at": _iso(f.due_at), "note": f.note, "assigned_to": f.assigned_to, "assigned_name": users.get(f.assigned_to),
            "status": f.status, "outcome": f.outcome, "closed_by": f.closed_by, "closed_at": _iso(f.closed_at),
-           "bucket": fups.bucket(f.due_at) if f.status == "OPEN" else f.status}
+           "bucket": fups.bucket(f.due_at) if f.status == "OPEN" else f.status, "reminded_at": _iso(getattr(f, "reminded_at", None))}
     if lead is not None: out.update(lead_name=lead.name, lead_phone=lead.phone, lead_stage=lead.stage, lead_city=lead.city)
     return out
 
@@ -366,14 +366,59 @@ class RescheduleIn(_Base):
 def reschedule(fid: str, b: RescheduleIn, db: Session = Depends(get_db), user: dict = Depends(require_roles(*WRITE))):
     f = _get_fu(db, fid); l = db.get(m.Lead, f.lead_id); d = b.model_dump(exclude_unset=True)
     if "due_at" in d and d["due_at"]:
-        old = _iso(f.due_at); f.due_at = _future(b.due_at)
+        old = _iso(f.due_at); f.due_at = _future(b.due_at); f.reminded_at = None          # remind again for the new time
         crm.log(db, l, user, "FOLLOW_UP", text=f"{f.kind.title()} moved to {f.due_at.astimezone(fups.local_tz()):%d %b %Y %H:%M}")
     if "note" in d: f.note = (b.note or "").strip() or None
     if "assigned_to" in d:
         try: u = fups.check_assignee(db, b.assigned_to)
         except ValueError as e: raise HTTPException(422, str(e))
+        if (u.id if u else None) != f.assigned_to: f.reminded_at = None                 # the new person gets their own reminder
         f.assigned_to = u.id if u else None
     db.commit(); return fu_out(f, {u.id: u.full_name for u in db.query(m.User)}, l)
+
+
+# ── M25: WhatsApp (free click-to-chat links — the user presses send) ────────────
+WA_TARGETS = ("LEAD", "ASSIGNEE")
+
+
+def _wa_draft(db: Session, f: m.LeadFollowUp, target: str, user: dict) -> dict:
+    from app.services import reminders
+    target = (target or "").upper()
+    if target not in WA_TARGETS: raise HTTPException(422, "target must be LEAD or ASSIGNEE")
+    l = db.get(m.Lead, f.lead_id)
+    if target == "LEAD":
+        return {"target": "LEAD", "name": l.name, "phone": l.phone, "text": reminders.whatsapp_text(db, f, l, user.get("name")),
+                "problem": None if l.phone else "This lead has no phone number — add it on the lead first"}
+    a = db.get(m.User, f.assigned_to) if f.assigned_to else None
+    if not a: raise HTTPException(409, "Nobody is assigned to this follow-up")
+    return {"target": "ASSIGNEE", "name": a.full_name, "phone": a.phone, "text": reminders.reminder(db, f, l, a)[1],
+            "problem": None if a.phone else f"{a.full_name} has no phone number — add it in Settings → Users"}
+
+
+@router.get("/followups/{fid}/whatsapp")
+def whatsapp_draft(fid: str, target: str = "LEAD", db: Session = Depends(get_db), user: dict = Depends(require_roles(*WRITE))):
+    return _wa_draft(db, _get_fu(db, fid), target, user)
+
+
+class WhatsAppIn(_Base):
+    target: str
+    phone: str | None = Field(None, max_length=40)       # default: the lead's / assignee's number
+    text: str = Field(min_length=1, max_length=4000)
+
+
+@router.post("/followups/{fid}/whatsapp", status_code=201)
+def whatsapp_open(fid: str, b: WhatsAppIn, db: Session = Depends(get_db), user: dict = Depends(require_roles(*WRITE))):
+    from app.services import notify
+    f = _get_fu(db, fid); d = _wa_draft(db, f, b.target, user); l = db.get(m.Lead, f.lead_id)
+    phone = (b.phone or "").strip() or d["phone"]
+    if not phone: raise HTTPException(409, d["problem"])
+    try: url = notify.whatsapp_url(phone, b.text)
+    except notify.NotifyError as e: raise HTTPException(e.status, e.detail)
+    kind = "FOLLOWUP_WHATSAPP" if d["target"] == "LEAD" else "FOLLOWUP_REMINDER"
+    db.add(m.Message(channel="WHATSAPP", kind=kind, trigger="MANUAL", project_id=None, ref_id=f.id, to=phone, subject=None, body=b.text, status="LINK",
+                     user_id=user.get("sub"), user_name=user.get("name")))
+    crm.log(db, l, user, "FOLLOW_UP", text=(f"WhatsApp opened to the lead ({phone})" if d["target"] == "LEAD" else f"WhatsApp reminder opened for {d['name']} ({phone})"))
+    db.commit(); return {"whatsapp_url": url, "to": phone, "target": d["target"]}
 
 
 @router.get("/followups")

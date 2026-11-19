@@ -132,7 +132,7 @@ def test_roles_matrix_and_system_and_ai(client):
     cap = {c["name"]: c["roles"] for c in r["capabilities"]}
     assert "QC_MANAGER" in cap["QC inspection"] and "SALES" not in cap["QC inspection"] and cap["Client portal (own projects only)"] == ["CLIENT"]
     s = client.get("/api/settings/system", headers=h).json()
-    assert s["database"]["kind"] == "sqlite" and s["storage"]["writable"] is True and s["pdf"] is True and "users" in s["database"]["rows"]
+    assert s["database"]["kind"] in ("sqlite", "postgresql") and s["storage"]["writable"] is True and s["pdf"] is True and "users" in s["database"]["rows"]
     assert client.get("/api/settings/system", headers=hdr(client, "des12@test.com")).status_code == 403
     ai = client.get("/api/settings/ai", headers=h).json()
     assert any("AI Project Manager" in f["name"] for f in ai["features"]) and "ollama" in ai
