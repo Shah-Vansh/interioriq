@@ -15,7 +15,7 @@ const LABELS: Record<string, string> = {
   estimation: 'Estimation', boq: 'BOQ', costing: 'Costing', takeoff: 'Take-off', quotations: 'Quotations', invoices: 'Invoices',
   execution: 'Execution', procurement: 'Procurement', po: 'Purchase Orders', inventory: 'Inventory',
   manufacturing: 'Manufacturing', cutting: 'Cutting Lists', delivery: 'Delivery', installation: 'Installation', qc: 'Quality Control',
-  'client-portal': 'Client Portal', finance: 'Finance', payables: 'Payables', reports: 'Reports', revenue: 'Revenue', profitability: 'Profitability',
+  'client-portal': 'Client Portal', finance: 'Finance', payables: 'Payables', 'accounting-export': 'Accounting export', reports: 'Reports', revenue: 'Revenue', profitability: 'Profitability',
   settings: 'Settings', notifications: 'Notifications', company: 'Company', users: 'Users', roles: 'Roles', system: 'System', backups: 'Backups',
 }
 const AI_LABEL: Record<string, string> = { design: 'AI Designer', reports: 'AI Project Manager', settings: 'AI Engines' }

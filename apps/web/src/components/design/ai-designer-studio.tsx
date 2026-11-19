@@ -1,5 +1,6 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
+import { DesignChat } from '@/components/design/design-chat'
 import Link from 'next/link'
 import { Wand2, Loader2, ShieldCheck, ShieldAlert, Save, Download, History, Info, PackageX } from 'lucide-react'
 import { api, ApiError, downloadFile, DesignVersion, GenerateResult, Measurement, Room } from '@/lib/api'
@@ -12,7 +13,7 @@ import { cn } from '@/lib/utils'
 
 interface Slot { slot: string; label: string; categories: string[] }
 interface LayoutMeta { kinds: string[]; room_kind: Record<string, string>; kitchen_shapes: string[]; tiers: string[]; styles: string[]; required: Record<string, Slot[]>; optional: Record<string, Slot[]> }
-const KIND_LABEL: Record<string, string> = { BEDROOM: 'Bedroom', LIVING: 'Living room', DINING: 'Dining room', KITCHEN: 'Kitchen', STUDY: 'Study' }
+const KIND_LABEL: Record<string, string> = { BEDROOM: 'Bedroom', LIVING: 'Living room', DINING: 'Dining room', KITCHEN: 'Kitchen', STUDY: 'Study', BATHROOM: 'Bathroom', UTILITY: 'Utility / laundry' }
 const SHAPE_LABEL: Record<string, string> = { AUTO: 'Auto (most counter)', STRAIGHT: 'Straight', L: 'L-shaped', PARALLEL: 'Parallel', U: 'U-shaped' }
 const EXAMPLES: Record<string, string[]> = {
   BEDROOM: ['Modern bedroom with walnut wardrobe, warm tones, under 20 lakh', 'Minimal luxury master bedroom, budget 12 lakh'],
@@ -37,6 +38,7 @@ export function AIDesignerStudio() {
   const [inStock, setInStock] = useState(true)
   const [tier, setTier] = useState('BALANCED')
   const [style, setStyle] = useState('')
+  const [chatBudget, setChatBudget] = useState<string | null>(null)       // set by the design chat; else read from the brief
   const [result, setResult] = useState<GenerateResult | null>(null)
   const [history, setHistory] = useState<DesignVersion[]>([])
   const [busy, setBusy] = useState(false)
@@ -58,13 +60,14 @@ export function AIDesignerStudio() {
   }, [sel.roomId])
   useEffect(() => { loadRoom() }, [loadRoom])
   // the room's own type decides the layout unless the user picks another (e.g. an 'Other' room laid out as a study)
-  useEffect(() => { setKind(meta?.room_kind[sel.room?.room_type ?? ''] ?? ''); setSkip([]); setShape('AUTO'); setSeats('') }, [sel.room?.room_type, meta])
+  useEffect(() => { setKind(meta?.room_kind[sel.room?.room_type ?? ''] ?? ''); setSkip([]); setShape('AUTO'); setSeats(''); setChatBudget(null) }, [sel.room?.room_type, meta])
 
   const generate = async () => {
     setBusy(true); setError(''); setSaved('')
     try {
       setResult(await api.post<GenerateResult>(`/rooms/${sel.roomId}/designs/generate`, {
         prompt, catalogue_filter_in_stock: inStock, room_type: kind || undefined,
+        budget: chatBudget ?? undefined,
         options: { skip, tier, ...(style ? { styles: [style] } : {}), ...(kind === 'KITCHEN' ? { kitchen_shape: shape } : {}), ...(kind === 'DINING' && seats ? { seats: Number(seats) } : {}) } }))
     } catch (e) { setResult(null); setError(e instanceof ApiError ? e.message : 'Generation failed') } finally { setBusy(false) }
   }
@@ -132,6 +135,10 @@ export function AIDesignerStudio() {
               <button onClick={generate} disabled={busy || !kind} className="w-full flex items-center justify-center gap-2 py-2.5 rounded font-medium text-sm bg-amber-700 hover:bg-amber-800 disabled:opacity-60 text-white">
                 {busy ? <><Loader2 className="w-4 h-4 animate-spin" />Generating…</> : <><Wand2 className="w-4 h-4" />Generate {KIND_LABEL[kind]?.toLowerCase() ?? ''} layout</>}</button>
             </div>
+            {sel.roomId && kind && <DesignChat roomId={sel.roomId} roomType={kind} prompt={prompt} inStock={inStock} budget={chatBudget}
+              options={{ skip, tier, styles: style ? [style] : [], kitchen_shape: shape, seats: seats ? Number(seats) : null }}
+              onApply={r => { setSkip(r.options.skip); setTier(r.options.tier); setStyle(r.options.styles[0] ?? ''); setShape(r.options.kitchen_shape || 'AUTO')
+                setSeats(r.options.seats ? String(r.options.seats) : ''); setChatBudget(r.budget); setResult(r.result); setSaved('') }} />}
             <div className="bg-white border border-stone-200 rounded-lg shadow-sm">
               <div className="px-4 py-3 border-b border-stone-100 flex items-center gap-2 text-sm font-semibold"><History className="w-4 h-4 text-amber-700" />Saved versions</div>
               {history.length === 0 ? <p className="p-4 text-xs text-stone-400">None yet. History is append-only — saving never overwrites.</p>

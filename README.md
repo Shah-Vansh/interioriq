@@ -6,9 +6,10 @@ manufacturing → delivery → installation → QC → handover, on real data.
 **Highlights**
 - CRM with lead follow-ups (email + WhatsApp reminders), client portal, project teams and role-based access
 - Room survey with OCR of drawings (PDF text layer / RapidOCR), doors & windows
-- Rule-based layouts for bedroom, living, dining, kitchen (sink, hob, wall cabinets, fillers) and study, validated with Shapely
-- 3D editor (React Three Fiber), DXF drawings (plan, ceiling, electrical, elevations)
-- Catalogue with price/stock ledgers, BOQ + quotation PDFs, optional GST invoices, purchase orders, payables, profitability
+- Rule-based layouts for bedroom, living, dining, kitchen, study, bathroom and utility, validated with Shapely; a design chat adjusts them
+- 3D editor (React Three Fiber) with free rotation and colours, DXF drawings (plan, ceiling, electrical, elevations)
+- Catalogue with photos, Excel import, price/stock ledgers and per-supplier quotes; BOQ + quotation PDFs (₹, Gujarati/Hindi, editable payment terms);
+  optional GST invoices + credit notes, purchase orders, payables, profitability, Tally export
 - Decimal-only money on the server; append-only design history; Alembic migrations; optional Celery workers
 
 **Stack:** FastAPI · SQLAlchemy · Alembic · SQLite (Postgres via `DATABASE_URL`) · Next.js 14 · Tailwind · Three.js · Playwright

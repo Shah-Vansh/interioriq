@@ -1,5 +1,6 @@
 """Deterministic geometry. The LLM never performs these calculations."""
 from dataclasses import dataclass, field
+from shapely import affinity
 from shapely.geometry import box
 
 @dataclass
@@ -9,6 +10,7 @@ class Obj:
     price: float = 0
     sku: str = ""
     z: float = 0          # height of the object's underside above the floor (wall cabinets, wall-hung units); 0 = stands on the floor
+    rotation: float = 0   # M30: degrees anticlockwise (seen from above) about the footprint centre; x/y/length/width describe the UNROTATED box
 
 @dataclass
 class Room:
@@ -41,7 +43,15 @@ def door_zones(room: "Room") -> list[tuple[str, object]]:
 MIN_WALKWAY = 600   # mm
 WALL_MOUNTED = 1200  # underside at/above this height: wall-mounted — doesn't take floor space, walkways or working zones
 DOOR_HEAD = 2100     # a unit fixed higher than a door's head can't block it
-def _rect(o: Obj): return box(o.x, o.y, o.x + o.length, o.y + o.width)
+def footprint(x: float, y: float, length: float, width: float, rotation: float = 0):
+    """The floor footprint as a polygon — an axis-aligned box, turned about its centre when rotation isn't a multiple of 360."""
+    b = box(x, y, x + length, y + width)
+    r = (rotation or 0) % 360
+    return b if r == 0 else affinity.rotate(b, r, origin="center")
+def corners(o: dict) -> list[tuple[float, float]]:
+    """Footprint corners of a saved object (dict) — for drawings."""
+    return list(footprint(o["x"], o["y"], o["length"], o["width"], o.get("rotation") or 0).exterior.coords)[:4]
+def _rect(o: Obj): return footprint(o.x, o.y, o.length, o.width, o.rotation)
 def top(o: Obj) -> float: return (o.z or 0) + (o.height or 0)
 def on_floor(o: Obj) -> bool: return (o.z or 0) < WALL_MOUNTED
 def stacked_apart(a: Obj, b: Obj) -> bool:

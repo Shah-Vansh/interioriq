@@ -46,6 +46,7 @@ def my_project(pid: str, db: Session = Depends(get_db), user: dict = Depends(CLI
     o["timeline"] = [{"text": e.text, "created_at": e.created_at.isoformat()} for e in events]
     o["invoices"] = [{k: i[k] for k in ("id", "invoice_no", "kind", "issue_date", "description", "amount", "status")}
                      for i in r_inv.summary(db, pid)["invoices"] if i["status"] == "ISSUED"]
+    o["credit_notes"] = [{k: n[k] for k in ("id", "note_no", "invoice_no", "issue_date", "reason", "amount")} for n in r_inv.summary(db, pid)["credit_notes"] if n["status"] == "ISSUED"]
     o["deliveries"] = [{k: d[k] for k in ("dn_number", "status", "scheduled_on", "delivered_at", "lines")} for d in ops.list_deliveries(pid, None, db, user)]
     return o
 
@@ -67,7 +68,7 @@ def decide(bid: str, body: DecisionIn, db: Session = Depends(get_db), user: dict
 
 @router.get("/portal/boqs/{bid}/quotation.pdf")
 def quote_pdf(bid: str, db: Session = Depends(get_db), user: dict = Depends(CLIENT_ONLY)):
-    _my_boq(db, user, bid); return r_est.quotation(bid, db, user)
+    _my_boq(db, user, bid); return r_est.quotation(bid, db=db, user=user)
 
 
 @router.get("/portal/projects/{pid}/handover.pdf")

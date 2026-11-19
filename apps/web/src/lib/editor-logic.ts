@@ -31,8 +31,24 @@ export function duplicate(o: Obj, id: string, offset = 300): Obj {
   return { ...o, id, name: o.name.replace(/ \(copy\)$/, '') + ' (copy)', x: o.x + offset, y: o.y + offset }
 }
 
+/** Axis-aligned bounds of the (possibly rotated) footprint, in mm. */
+export function bounds(o: Obj) {
+  const cx = o.x + o.length / 2, cy = o.y + o.width / 2, a = ((o.rotation ?? 0) * Math.PI) / 180
+  const hx = (Math.abs(Math.cos(a)) * o.length + Math.abs(Math.sin(a)) * o.width) / 2
+  const hy = (Math.abs(Math.sin(a)) * o.length + Math.abs(Math.cos(a)) * o.width) / 2
+  return { minX: cx - hx, maxX: cx + hx, minY: cy - hy, maxY: cy + hy }
+}
+
+/** Clear distance from the footprint (rotated too) to each wall. */
 export function gaps(o: Obj, L: number, W: number) {
-  return { west: r1(o.x), east: r1(L - (o.x + o.length)), south: r1(o.y), north: r1(W - (o.y + o.width)) }
+  const b = bounds(o)
+  return { west: r1(b.minX), east: r1(L - b.maxX), south: r1(b.minY), north: r1(W - b.maxY) }
+}
+
+/** Turn by `deg` (anticlockwise seen from above) about the centre; kept in 0–360. */
+export function rotateBy(o: Obj, deg: number): Obj {
+  const r = Math.round((((o.rotation ?? 0) + deg) % 360 + 360) % 360 * 100) / 100
+  return { ...o, rotation: r }
 }
 
 export interface CatalogueLike { sku: string; name: string; category: string; length_mm: number; width_mm: number; height_mm: number; price: number; mount_mm?: number | null }

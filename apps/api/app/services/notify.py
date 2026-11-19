@@ -137,7 +137,7 @@ def context(db: Session, kind: str, ref_id: str) -> dict:
         return {"project_id": p.id, "email": c.email if c else None, "phone": c.phone if c else None,
                 "ctx": {**base, "client": c.name if c else "Sir/Madam", "project": p.name, "quotation_no": flow.quote_no(p.project_number, b),
                         "amount": inr(b.totals["grand_total"]), "valid_days": comp.get("quote_valid_days")},
-                "attachment": lambda: resp(r_est.quotation(b.id, db, {}))}
+                "attachment": lambda: resp(r_est.quotation(b.id, db=db, user={}))}
     if kind == "INVOICE":
         i = db.get(m.Invoice, ref_id)
         if not i: raise NotifyError(404, "Invoice not found")

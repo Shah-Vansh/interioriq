@@ -17,7 +17,8 @@ from app.models import models as m
 from app.services import access
 from app.services import catalogue as catlib, company as companylib, cutting, doc_pdf, flow, fulfilment, notify
 from app.services.cost_engine import D, inr, split_payments
-from app.services.quotation_pdf import PAYMENT_SCHEDULE
+from app.services import quote_terms
+from app.services import supplier_prices as sp_lib
 
 router = APIRouter(tags=["Operations"])
 STAFF = tuple(r for r in m.ROLES if r not in ("CLIENT", "SUPER_ADMIN"))
@@ -178,8 +179,13 @@ def payment_summary(db: Session, pid: str) -> dict:
     paid = sum((D(x.amount) for x in pays), Decimal(0))
     schedule, cum, left = [], Decimal(0), paid
     if quoted > 0:
-        for (label, pct), amt in zip(PAYMENT_SCHEDULE, split_payments(quoted, [p for _, p in PAYMENT_SCHEDULE])):
+        stages: dict = {}                                                    # label → amount, in first-seen order
+        for b in boqs:
+            sch = quote_terms.schedule_of(b.params)
+            for (label, _), amt in zip(sch, split_payments(b.totals["grand_total"], [p for _, p in sch])): stages[label] = stages.get(label, Decimal(0)) + amt
+        for label, amt in stages.items():
             got = min(amt, max(Decimal(0), left)); left -= got
+            pct = format((amt * 100 / quoted).quantize(Decimal("0.01")).normalize(), "f")
             schedule.append({"stage": label, "pct": pct, "amount": _money(amt), "received": _money(got), "status": "PAID" if got == amt else ("PART" if got > 0 else "DUE")})
     return {"quoted": _money(quoted), "paid": _money(paid), "balance": _money(quoted - paid), "schedule": schedule,
             "payments": [{"id": x.id, "boq_id": x.boq_id, "amount": _money(x.amount), "received_on": x.received_on.date().isoformat(), "mode": x.mode,
@@ -254,6 +260,7 @@ def procure(bid: str, body: ProcureIn = ProcureIn(), db: Session = Depends(get_d
         if not it: unassigned.append(f"{sku} (set in Settings → Company, but not in the catalogue)"); continue
         rest = amount - fulfilment.allocated(db, b.id, it.id) - fulfilment.on_order(db, b.id, it.id)
         if rest > 0: wanted.append((it, rest, it.name))
+    switched: list = []
     for it, rest, desc in wanted:
         if body.use_stock and (it.stock or 0) > 0:
             take = min(rest, it.stock)
@@ -261,22 +268,23 @@ def procure(bid: str, body: ProcureIn = ProcureIn(), db: Session = Depends(get_d
                               unit_cost=it.cost_price if it.cost_price is not None else it.price)     # costed now; PO receipts are costed on their PO line
             allocated.append({"sku": it.sku, "qty": take}); rest -= take
         if rest <= 0: continue
-        if not it.supplier_id: unassigned.append(f"{it.sku} {it.name} × {rest}"); continue
-        need[it.supplier_id].append((it, rest))
+        sid, rate, src, quote = sp_lib.best(db, it, rest)                           # M34: cheapest valid supplier quote, else default supplier at cost
+        if not sid: unassigned.append(f"{it.sku} {it.name} × {rest}"); continue
+        need[sid].append((it, rest, rate))
+        if src == "QUOTE" and sid != it.supplier_id: switched.append(f"{it.sku}: {db.get(m.Supplier, sid).name} at Rs. {rate:,.2f} (best valid quote)")
     created = []
     for sid, rows in need.items():
         po = m.PurchaseOrder(po_number=flow.next_number(db, m.PurchaseOrder, m.PurchaseOrder.po_number, f"PO-{project.project_number}"), project_id=project.id,
                              boq_id=b.id, supplier_id=sid, status="DRAFT", created_by=user.get("sub"))
         db.add(po); db.flush()
-        for it, q in rows:
-            db.add(m.POLine(po_id=po.id, item_id=it.id, sku=it.sku, description=it.name, unit=it.unit or "No.", qty=q,
-                            rate=it.cost_price if it.cost_price is not None else it.price))           # what we pay; editable while the PO is a draft
+        for it, q, rate in rows:
+            db.add(m.POLine(po_id=po.id, item_id=it.id, sku=it.sku, description=it.name, unit=it.unit or "No.", qty=q, rate=rate))   # what we pay; editable while a draft
         created.append(po)
         flow.event(db, project.id, "PROCUREMENT", f"{po.po_number} drafted for {db.get(m.Supplier, sid).name} ({len(rows)} line(s)) from {qno}", user, "PO", po.id)
     if allocated: flow.event(db, project.id, "PROCUREMENT", f"Allocated from stock for {qno}: " + ", ".join(f"{a['sku']} × {a['qty']}" for a in allocated), user, "BOQ", b.id)
     db.commit()
     return {"created": [po_out(db, po, False) for po in created], "allocated_from_stock": allocated, "unassigned": unassigned,
-            "manual": manual, "nothing_to_do": not (created or allocated or unassigned)}
+            "manual": manual, "supplier_quotes_used": switched, "nothing_to_do": not (created or allocated or unassigned)}
 
 
 @router.get("/purchase-orders")

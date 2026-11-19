@@ -92,3 +92,17 @@ describe('inrStr (display only)', () => {
   it.each([['0', '0.00'], ['999', '999.00'], ['1000', '1,000.00'], ['100000', '1,00,000.00'], ['476753.19', '4,76,753.19'], ['12345678.9', '1,23,45,678.90'], ['-1234567.5', '-12,34,567.50']])('%s -> %s', (i, o) => { expect(inrStr(i)).toBe(o) })
   it('leaves non-numeric input alone', () => { expect(inrStr('n/a')).toBe('n/a') })
 })
+
+import { bounds, gaps as gapsOf, rotateBy } from './editor-logic'
+describe('free rotation (M30)', () => {
+  const o = { id: 'a', name: 'Table', category: 'Table', x: 1000, y: 1000, length: 1000, width: 400, height: 750, price: 0 }
+  it('keeps the angle in 0–360', () => {
+    expect(rotateBy(o, -30).rotation).toBe(330)
+    expect(rotateBy(rotateBy(o, 350), 20).rotation).toBe(10)
+  })
+  it('measures wall gaps from the turned footprint', () => {
+    const b = bounds({ ...o, rotation: 90 })
+    expect(Math.round(b.minX)).toBe(1300); expect(Math.round(b.maxY)).toBe(1700)
+    expect(gapsOf({ ...o, rotation: 90 }, 4000, 3000).north).toBe(1300)
+  })
+})

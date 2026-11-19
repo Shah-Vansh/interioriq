@@ -79,6 +79,7 @@ class LeadFollowUp(Base):
     closed_by = Column(String); closed_at = Column(DateTime(timezone=True))
     created_by = Column(String)
     created_at = Column(DateTime(timezone=True), default=_now)
+    repeat_days = Column(Integer)                    # M31: repeat every N days — marking it done books the next one; NULL = once
     reminded_at = Column(DateTime(timezone=True))   # M25: when the "due soon" reminder was claimed (cleared when rescheduled/reassigned)
 
 
@@ -165,6 +166,7 @@ class FurnitureItem(Base):
     description = Column(Text)
     is_active = Column(Boolean)                          # archived items are hidden from the designer but old designs/BOQs still resolve them
     mount_mm = Column(Float)                             # M21b: fixed this high above the floor when placed (wall cabinet 1450); NULL = stands on the floor
+    photo = Column(String)                               # M28: stored photo base name (services/photos.py); NULL = no photo
     style = Column(String)                               # M21b: style tags, lower-case, comma separated (modern, minimal, luxury, …) — the designer prefers matches
     created_at = Column(DateTime(timezone=True), default=_now)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -479,6 +481,45 @@ class Invoice(Base):
     sac_code = Column(String)
     seller = Column(JSON, nullable=False)                  # company details AS ISSUED (later settings changes don't alter an issued invoice)
     buyer = Column(JSON, nullable=False)
+    status = Column(String, nullable=False, default="ISSUED")   # ISSUED | CANCELLED
+    cancel_reason = Column(Text)
+    user_id = Column(String); user_name = Column(String)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    cancelled_at = Column(DateTime(timezone=True))
+
+
+class SupplierPrice(Base):
+    """M34: what a SUPPLIER charges us for an item (their quote / rate card), with validity dates and a minimum quantity. Procurement buys
+    from the cheapest valid quote; with none it falls back to the item's default supplier and cost. Never edited: end a quote and add a new one."""
+    __tablename__ = "supplier_prices"
+    id = Column(String, primary_key=True, default=_id)
+    item_id = Column(String, ForeignKey("furniture_items.id"), nullable=False, index=True)
+    supplier_id = Column(String, ForeignKey("suppliers.id"), nullable=False, index=True)
+    price = Column(Numeric(12, 2), nullable=False)
+    min_qty = Column(Integer, nullable=False, default=1)
+    valid_from = Column(DateTime(timezone=True), nullable=False)
+    valid_to = Column(DateTime(timezone=True))                 # NULL = open-ended
+    lead_days = Column(Integer)
+    note = Column(Text)
+    ended_reason = Column(Text)
+    user_id = Column(String); user_name = Column(String)
+    created_at = Column(DateTime(timezone=True), default=_now)
+
+
+class CreditNote(Base):
+    """M33: reduces an ISSUED invoice (rate change, item dropped, discount after billing) without cancelling it. Same GST treatment as its
+    invoice (TAX: taxable + CGST/SGST or IGST, parts sum exactly; PLAIN: none). Never edited; cancelled with a reason; number never reused."""
+    __tablename__ = "credit_notes"
+    id = Column(String, primary_key=True, default=_id)
+    note_no = Column(String, unique=True, nullable=False)
+    seq = Column(Integer, nullable=False); fy = Column(String, nullable=False)
+    invoice_id = Column(String, ForeignKey("invoices.id"), nullable=False, index=True)
+    project_id = Column(String, ForeignKey("projects.id"), nullable=False, index=True)
+    issue_date = Column(DateTime(timezone=True), nullable=False)
+    reason = Column(Text, nullable=False)
+    amount = Column(Numeric(14, 2), nullable=False)
+    taxable = Column(Numeric(14, 2), nullable=False)
+    cgst = Column(Numeric(14, 2), nullable=False, default=0); sgst = Column(Numeric(14, 2), nullable=False, default=0); igst = Column(Numeric(14, 2), nullable=False, default=0)
     status = Column(String, nullable=False, default="ISSUED")   # ISSUED | CANCELLED
     cancel_reason = Column(Text)
     user_id = Column(String); user_name = Column(String)

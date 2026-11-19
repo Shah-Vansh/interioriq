@@ -1,2 +1,3 @@
 import { CompanySettings } from '@/components/settings/settings-views'
-export default function Page() { return <CompanySettings /> }
+import { DefaultQuoteTerms } from '@/components/estimation/quote-terms'
+export default function Page() { return <div className="space-y-5"><CompanySettings /><div className="max-w-[900px]"><DefaultQuoteTerms /></div></div> }

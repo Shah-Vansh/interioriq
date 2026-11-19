@@ -66,7 +66,7 @@ with sync_playwright() as p:
     # Settings → Company: board SKU so procurement orders sheets automatically
     page.goto(f"{WEB}/settings/company"); page.wait_for_selector("text=Company profile")
     page.get_by_label("18mm carcass board SKU (for cutting-list purchasing)", exact=True).fill(ply["sku"].lower())
-    page.get_by_role("button", name="Save").click(); page.wait_for_selector("[role=status]")
+    page.get_by_role("button", name="Save", exact=True).click(); page.wait_for_selector("[role=status]")
     check("company settings save (board SKU upper-cased)", page.get_by_label("18mm carcass board SKU (for cutting-list purchasing)", exact=True).input_value() == ply["sku"])
 
     # Quotations: send then approve

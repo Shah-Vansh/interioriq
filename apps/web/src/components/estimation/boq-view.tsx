@@ -6,6 +6,7 @@ import { Switch } from '@/components/ui/kit'
 const gstOn = (r: BoqParams) => r.gst_enabled !== false && r.gst_enabled !== 'false'
 const tkOn = (r: BoqParams) => r.include_takeoff === true || r.include_takeoff === 'true'
 import { ProjectRoomPicker } from '@/components/shared/project-room-picker'
+import { QuoteTermsCard } from '@/components/estimation/quote-terms'
 import { cn, inrStr } from '@/lib/utils'
 
 const RATE_FIELDS: [keyof BoqParams, string, string][] = [['labour_pct', 'Labour %', '%'], ['overhead_pct', 'Overhead %', '%'], ['margin_pct', 'Margin %', '%'],
@@ -111,6 +112,7 @@ export function BoqView() {
                 <span className="font-mono">{k === 'discount' ? '−' : ''}{inrStr(open.totals[k])}</span></div>)}
               <div className="flex justify-between pt-3 mt-2 border-t-2 border-stone-200"><span className="font-bold">{open.gst_enabled ? 'Grand total (incl. GST)' : 'Grand total'}</span><span className="font-bold text-amber-700 font-mono" data-testid="grand-total">Rs. {inrStr(open.totals.grand_total)}</span></div>
             </div>
+            <div className="max-w-md ml-auto"><QuoteTermsCard boqId={open.id} /></div>
           </div>)}
         </div>
       </div>)}

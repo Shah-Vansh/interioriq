@@ -6,7 +6,7 @@ Size convention (same as the catalogue / 3D editor): length_mm = width along the
 import math
 
 MANUFACTURED = {"wardrobe", "tv unit", "study", "dresser", "shoe rack", "kitchen", "side table", "storage", "bookshelf", "vanity", "crockery", "cabinet",
-                "kitchen sink", "kitchen hob", "kitchen wall"}
+                "kitchen sink", "kitchen hob", "kitchen wall", "linen cabinet", "mirror cabinet", "utility base", "utility tall", "utility wall"}
 T, BACK_T = 18, 8                     # board thicknesses (mm)
 SHEET_L, SHEET_W, KERF = 2440, 1220, 4  # 8 x 4 ft sheet, saw kerf
 BOARD = {T: "18mm carcass board", BACK_T: "8mm back panel"}

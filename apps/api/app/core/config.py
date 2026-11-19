@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     TOKEN_MINUTES: int = 60 * 24
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_LLM_MODEL: str = "llama3.1:8b"
+    DESIGN_CHAT_LLM: bool = True          # M35: ask the local Ollama model (if reachable) to read design-chat messages; rules otherwise
     STORAGE_PATH: str = "../../storage"
     OCR_PROVIDER: str = "auto"            # auto | paddleocr | rapidocr | tesseract
     MAX_UPLOAD_MB: int = 25
@@ -38,7 +39,9 @@ class Settings(BaseSettings):
     BACKUP_HOUR: int = 2                    # local hour (COMPANY_UTC_OFFSET_MIN) after which the daily backup runs
     BACKUP_KEEP: int = 14                   # automatic backups kept (older ones deleted); manual and uploaded backups are never auto-deleted
     COMPANY_UTC_OFFSET_MIN: int = 330     # local time for "today"/"overdue" (India = +5:30). A fixed offset: Windows often lacks tz data            # background email sender (tests turn it off and drive the outbox directly)   # used in messages to link clients to their portal
-    PDF_FONT_PATH: str = ""               # optional .ttf with the glyphs you need (e.g. Gujarati/Hindi); default is built-in Helvetica (Latin only)
+    PDF_FONT_PATH: str = ""               # optional .ttf to force a font; empty = auto (services/pdf_fonts.py finds one with ₹ + Gujarati + Hindi)
+    PDF_FONT_BOLD_PATH: str = ""          # optional bold companion of PDF_FONT_PATH
+    PDF_FONTS: str = "auto"               # auto | builtin (Helvetica, Latin only, prints Rs.)
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
     # Local dev: the site may be opened as localhost OR 127.0.0.1, on 3000 or whichever port Next picks. Tighten for production.
     ALLOWED_ORIGIN_REGEX: str = r"https?://(localhost|127\.0\.0\.1)(:\d+)?"

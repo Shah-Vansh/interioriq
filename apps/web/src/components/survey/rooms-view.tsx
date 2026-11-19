@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
 
 const SOURCES = ['USER_VERIFIED', 'SITE_SURVEY', 'FLOOR_PLAN', 'OCR', 'VLM', 'AI_ESTIMATE']
 const LABELS = ['Length', 'Width', 'Ceiling Height']
-const ROOM_TYPES = ['MASTER_BEDROOM', 'BEDROOM', 'LIVING', 'DINING', 'KITCHEN', 'BATHROOM', 'STUDY', 'OTHER']
+const ROOM_TYPES = ['MASTER_BEDROOM', 'BEDROOM', 'LIVING', 'DINING', 'KITCHEN', 'BATHROOM', 'UTILITY', 'STUDY', 'OTHER']
 const BADGE: Record<string, string> = {
   USER_VERIFIED: 'bg-green-50 text-green-700', SITE_SURVEY: 'bg-blue-50 text-blue-700', FLOOR_PLAN: 'bg-cyan-50 text-cyan-700',
   OCR: 'bg-purple-50 text-purple-700', VLM: 'bg-amber-50 text-amber-700', AI_ESTIMATE: 'bg-red-50 text-red-700',

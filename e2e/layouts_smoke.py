@@ -17,7 +17,7 @@ def room(name, rtype, L, W, door=None):
     for l, v in (("Length", L), ("Width", W), ("Ceiling Height", 2900)): c.put(f"{API}/rooms/{rid}/measurements", json={"label": l, "value": v, "source": "USER_VERIFIED"}, headers=H)
     if door: c.post(f"{API}/rooms/{rid}/openings", json={"kind": "DOOR", "wall": door[0], "offset_mm": door[1], "width_mm": 900, "height_mm": 2100}, headers=H).raise_for_status()
     return rid
-living = room("Living", "LIVING", 5200, 4000, ("S", 300)); kitchen = room("Kitchen", "KITCHEN", 3600, 3000, ("S", 2500)); bath = room("Bath", "BATHROOM", 2400, 1800)
+living = room("Living", "LIVING", 5200, 4000, ("S", 300)); kitchen = room("Kitchen", "KITCHEN", 3600, 3000, ("S", 2500)); bath = room("Bath", "BATHROOM", 2400, 1800, ("S", 1400)); store = room("Store", "OTHER", 2400, 1800)
 items = c.get(f"{API}/catalogue/items", params={"q": "TVU-"}, headers=H).json(); items = items.get("items", items) if isinstance(items, dict) else items
 tvs = [i for i in items if i["category"] == "TV Unit" and i["stock"] > 0]
 
@@ -96,12 +96,17 @@ with sync_playwright() as p:
     b = c.post(f"{API}/rooms/{kitchen}/designs/{v}/boq", json={}, headers=H).json()
     check("BOQ groups the kitchen units with quantities", any(i["description"].startswith("Kitchen Wall Cabinet") and int(i["qty"]) >= 2 for i in b["items"]) and any("Sink" in i["description"] for i in b["items"]), str([(i["description"], i["qty"]) for i in b["items"]]))
 
-    # bathroom: not covered until a type is chosen
+    # an 'other' room: not covered until a type is chosen
     page.goto(f"{WEB}/design/ai"); page.wait_for_selector(f"select option:has-text('{PN} ·')", state="attached"); sels = page.locator("main select")
-    pick_room("Bath")
-    check("bathroom: explained, Generate disabled", page.locator("text=automatic layouts don't cover it").count() == 1 and page.get_by_role("button", name="Generate").is_disabled())
+    pick_room("Store")
+    check("'other' room: explained, Generate disabled", page.locator("text=automatic layouts don't cover it").count() == 1 and page.get_by_role("button", name="Generate").is_disabled())
     page.get_by_label("Layout type").select_option("STUDY"); gen(); page.get_by_test_id("layout-notes").wait_for()
-    check("bathroom laid out as a study once chosen", "Study" in placed())
+    check("'other' room laid out as a study once chosen", "Study" in placed())
+    # M32: a bathroom is laid out directly — WC away from the door with elbow room, vanity, shower in a corner, mirror over the vanity
+    pick_room("Bath"); gen(); page.get_by_test_id("layout-notes").wait_for()
+    notes = page.get_by_test_id("layout-notes").inner_text()
+    check("bathroom gets a WC, vanity, shower and mirror", all(k in " ".join(placed()) for k in ("WC", "Vanity", "Shower", "Mirror")), str(placed())[:300])
+    check("bathroom notes explain the WC clearances", "elbow room" in notes or "each side" in notes, notes[:300])
 
     # out of stock → reported, not invented
     for tv in tvs: c.post(f"{API}/catalogue/items/{tv['id']}/stock", json={"delta": -tv["stock"], "reason": "e2e: all sold"}, headers=H).raise_for_status()
@@ -110,6 +115,17 @@ with sync_playwright() as p:
     page.get_by_label("Use only items in stock").uncheck(); gen(); page.wait_for_function("() => [...document.querySelectorAll('[data-placed]')].some(e => e.dataset.placed === 'TV Unit')")
     check("unticking 'in stock only' places it", page.get_by_test_id("layout-missing").count() == 0)
     for tv in tvs: c.post(f"{API}/catalogue/items/{tv['id']}/stock", json={"delta": tv["stock"], "reason": "e2e: restock"}, headers=H).raise_for_status()
+    # M35: design chat changes the generator's options and re-lays the room out (never places things itself)
+    page.goto(f"{WEB}/design/ai"); page.wait_for_selector(f"select option:has-text('{PN} ·')", state="attached"); sels = page.locator("main select")
+    pick_room("Living"); ch = page.get_by_test_id("design-chat"); ch.wait_for()
+    ch.get_by_label("Design chat message").fill("no armchair, make it cheaper"); ch.get_by_role("button", name="Send to design chat").click()
+    page.wait_for_function("() => document.querySelectorAll('[data-chat=iq]').length >= 1"); page.get_by_test_id("layout-notes").wait_for()
+    reply = ch.locator("[data-chat=iq]").last.inner_text()
+    check("chat applies the change and re-generates", "Done" in reply and "no armchair" in reply and "Armchair" not in " ".join(placed()), reply[:200])
+    check("chat updated the Tier picker", page.get_by_label("Tier").input_value() == "BUDGET" and not page.get_by_label("Include Armchair").is_checked())
+    ch.get_by_label("Design chat message").fill("Which sofas do we have under 1 lakh?"); ch.get_by_role("button", name="Send to design chat").click()
+    page.wait_for_function("() => document.querySelectorAll('[data-chat=iq]').length >= 2")
+    check("catalogue question answered from the catalogue", "sofas in the catalogue" in ch.locator("[data-chat=iq]").last.inner_text())
     check("no browser errors or failed requests", not problems, "; ".join(problems[:5]))
     br.close()
 

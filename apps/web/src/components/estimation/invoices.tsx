@@ -11,10 +11,12 @@ import { SendButton } from '@/components/notify/send'
 
 export interface Invoice { id: string; invoice_no: string; kind: 'TAX' | 'PLAIN'; status: 'ISSUED' | 'CANCELLED'; project_id: string; boq_id: string; issue_date: string; description: string
   amount: string; taxable: string; gst_rate: string; cgst: string; sgst: string; igst: string; place_of_supply: string | null; place_of_supply_name: string | null; buyer_name: string | null
-  cancel_reason: string | null; user_name: string | null; project_number?: string; project_name?: string }
+  cancel_reason: string | null; user_name: string | null; project_number?: string; project_name?: string; credited?: string; net?: string }
+export interface CreditNote { id: string; note_no: string; invoice_id: string; invoice_no: string | null; status: 'ISSUED' | 'CANCELLED'; issue_date: string; reason: string
+  amount: string; taxable: string; cgst: string; sgst: string; igst: string; cancel_reason: string | null }
 interface Milestone { stage: string; pct: number; amount: string; invoiced: string; remaining: string }
 interface QuoteInv { boq_id: string; quotation_no: string; grand_total: string; gst_enabled: boolean; gst_pct: string; invoiced: string; remaining: string; milestones: Milestone[] }
-interface ProjectInv { quotations: QuoteInv[]; invoices: Invoice[]; totals: { invoiced: string; paid: string; receivable: string }; states: Record<string, string> }
+interface ProjectInv { quotations: QuoteInv[]; invoices: Invoice[]; credit_notes?: CreditNote[]; totals: { invoiced: string; credited?: string; paid: string; receivable: string }; states: Record<string, string> }
 const WRITE = ['ADMIN', 'PROJECT_MANAGER', 'SALES']
 const fileName = (no: string) => no.replace(/\//g, '-') + '.pdf'
 
@@ -28,12 +30,13 @@ export function ProjectInvoices({ projectId, onChanged }: { projectId: string; o
   const role = useRole(); const can = hasRole(role, WRITE)
   const { data, reload, error } = useLoad<ProjectInv>(`/projects/${projectId}/invoices`)
   const [raising, setRaising] = useState(false); const [cancelling, setCancelling] = useState<Invoice | null>(null); const a = useAction()
+  const [crediting, setCrediting] = useState<Invoice | null>(null); const [voidCn, setVoidCn] = useState<CreditNote | null>(null)
   const refresh = () => { reload(); onChanged?.() }
   if (error) return <Alert>{error}</Alert>
   if (!data) return <Empty>Loading…</Empty>
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-3 gap-2 text-center">{([['Invoiced', data.totals.invoiced], ['Paid', data.totals.paid], ['Receivable', data.totals.receivable]] as const).map(([l, v]) =>
+      <div className={`grid ${Number(data.totals.credited ?? 0) ? 'grid-cols-4' : 'grid-cols-3'} gap-2 text-center`}>{([['Invoiced', data.totals.invoiced], ...(Number(data.totals.credited ?? 0) ? [['Credited', data.totals.credited ?? '0']] : []), ['Paid', data.totals.paid], ['Receivable', data.totals.receivable]] as [string, string][]).map(([l, v]) =>
         <div key={l} className="bg-stone-50 rounded p-2"><p className="text-[10px] uppercase text-stone-400">{l}</p><p data-testid={`inv-${l}`} className="text-sm font-semibold">{inr(v)}</p></div>)}</div>
       {a.error && <Alert>{a.error}</Alert>}
       {data.invoices.length > 0 && <ul className="divide-y divide-stone-50" data-testid="invoice-list">{data.invoices.map(i => <li key={i.id} data-invoice={i.invoice_no} className="py-2 text-xs space-y-0.5">
@@ -42,12 +45,24 @@ export function ProjectInvoices({ projectId, onChanged }: { projectId: string; o
         <div className="flex items-center gap-2 flex-wrap"><span className="text-stone-600">{fmtDate(i.issue_date)} · {i.description}</span><GstBreakup i={i} />
           <button onClick={() => a.run(i.id, () => downloadFile(`/invoices/${i.id}/pdf`, fileName(i.invoice_no)))} className={btn.small + ' ml-auto'} aria-label={`PDF ${i.invoice_no}`}><Download className="w-3 h-3" />PDF</button>
           {i.status === 'ISSUED' && <SendButton kind="INVOICE" refId={i.id} onSent={refresh} />}
+          {can && i.status === 'ISSUED' && Number(i.net ?? i.amount) > 0 && <button onClick={() => setCrediting(i)} className={btn.small} aria-label={`Credit note for ${i.invoice_no}`}>Credit note</button>}
           {can && i.status === 'ISSUED' && <button onClick={() => setCancelling(i)} className={btn.small}>Cancel</button>}</div>
+        {Number(i.credited ?? 0) > 0 && <p className="text-violet-800">Credited {inr(i.credited ?? '0')} · net {inr(i.net ?? i.amount)}</p>}
         {i.cancel_reason && <p className="text-red-700">Cancelled: {i.cancel_reason}</p>}</li>)}</ul>}
+      {(data.credit_notes ?? []).length > 0 && <div><h4 className="text-[11px] font-semibold uppercase text-stone-500 mb-1">Credit notes</h4>
+        <ul className="divide-y divide-stone-50" data-testid="credit-note-list">{(data.credit_notes ?? []).map(n => <li key={n.id} data-credit-note={n.note_no} className="py-2 text-xs space-y-0.5">
+          <div className="flex items-center gap-2 flex-wrap"><b className="font-mono">{n.note_no}</b><Pill s={n.status === 'CANCELLED' ? 'CANCELLED' : 'PART'} label={n.status === 'CANCELLED' ? 'Cancelled' : 'Credit note'} />
+            <span className="text-stone-500">against {n.invoice_no}</span><span className="ml-auto font-semibold">−{inr(n.amount)}</span></div>
+          <div className="flex items-center gap-2 flex-wrap"><span className="text-stone-600">{fmtDate(n.issue_date)} · {n.reason}</span>
+            <button onClick={() => a.run(n.id, () => downloadFile(`/credit-notes/${n.id}/pdf`, fileName(n.note_no)))} className={btn.small + ' ml-auto'} aria-label={`PDF ${n.note_no}`}><Download className="w-3 h-3" />PDF</button>
+            {can && n.status === 'ISSUED' && <button onClick={() => setVoidCn(n)} className={btn.small}>Cancel</button>}</div>
+          {n.cancel_reason && <p className="text-red-700">Cancelled: {n.cancel_reason}</p>}</li>)}</ul></div>}
       {can && data.quotations.length > 0 && <button onClick={() => setRaising(true)} className={btn.ghost + ' w-full'}><Plus className="w-3.5 h-3.5" />Raise invoice</button>}
       {data.quotations.length === 0 && <p className="text-[11px] text-stone-400">Invoices can be raised once a quotation is approved.</p>}
       {raising && <RaiseInvoice projectId={projectId} data={data} onClose={() => setRaising(false)} onSaved={() => { setRaising(false); refresh() }} />}
       {cancelling && <CancelInvoice inv={cancelling} onClose={() => setCancelling(null)} onSaved={() => { setCancelling(null); refresh() }} />}
+      {crediting && <NewCreditNote inv={crediting} onClose={() => setCrediting(null)} onSaved={() => { setCrediting(null); refresh() }} />}
+      {voidCn && <CancelCreditNote note={voidCn} onClose={() => setVoidCn(null)} onSaved={() => { setVoidCn(null); refresh() }} />}
     </div>
   )
 }
@@ -102,6 +117,28 @@ function CancelInvoice({ inv, onClose, onSaved }: { inv: Invoice; onClose: () =>
     <Field label="Reason"><input aria-label="Reason" value={reason} onChange={e => setReason(e.target.value)} className={input} /></Field>
     {a.error && <Alert>{a.error}</Alert>}
     <button onClick={() => a.run('c', async () => { await api.post(`/invoices/${inv.id}/cancel`, { reason }); onSaved() })} disabled={reason.trim().length < 3 || !!a.busy} className={btn.danger + ' w-full'}>Cancel invoice</button>
+  </Drawer>
+}
+
+function NewCreditNote({ inv, onClose, onSaved }: { inv: Invoice; onClose: () => void; onSaved: () => void }) {
+  const [amount, setAmount] = useState(''); const [reason, setReason] = useState(''); const a = useAction()
+  return <Drawer label="Credit note" title={`Credit note against ${inv.invoice_no}`} onClose={onClose}>
+    <p className="text-xs text-stone-600">Reduces this invoice without cancelling it — for a price change, an item dropped or a discount given after billing. Up to {inr(inv.net ?? inv.amount)} can be credited.
+      {inv.kind === 'TAX' ? ' GST is reversed in the same split as the invoice.' : ''}</p>
+    <Field label="Amount (₹, including GST if the invoice has it)"><input aria-label="Credit amount" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} className={input} /></Field>
+    <Field label="Reason (printed on the credit note)"><input aria-label="Credit reason" value={reason} onChange={e => setReason(e.target.value)} className={input} /></Field>
+    {a.error && <Alert>{a.error}</Alert>}
+    <button onClick={() => a.run('cn', async () => { await api.post(`/invoices/${inv.id}/credit-notes`, { amount: amount.replace(/[,\s₹]/g, ''), reason }); onSaved() })}
+      disabled={!amount.trim() || reason.trim().length < 5 || !!a.busy} className={btn.primary + ' w-full'}>Issue credit note</button>
+  </Drawer>
+}
+
+function CancelCreditNote({ note, onClose, onSaved }: { note: CreditNote; onClose: () => void; onSaved: () => void }) {
+  const [reason, setReason] = useState(''); const a = useAction()
+  return <Drawer label="Cancel credit note" title={`Cancel ${note.note_no}`} onClose={onClose}>
+    <Field label="Reason"><input aria-label="Reason" value={reason} onChange={e => setReason(e.target.value)} className={input} /></Field>
+    {a.error && <Alert>{a.error}</Alert>}
+    <button onClick={() => a.run('c', async () => { await api.post(`/credit-notes/${note.id}/cancel`, { reason }); onSaved() })} disabled={reason.trim().length < 3 || !!a.busy} className={btn.danger + ' w-full'}>Cancel credit note</button>
   </Drawer>
 }
 

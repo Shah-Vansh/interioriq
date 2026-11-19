@@ -3,15 +3,15 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import require_roles
 from app.models import models as m
-from app.services import boq as boqlib, quotation_pdf, company as companylib, flow, takeoff as takeofflib
-from app.services.cost_engine import D
+from app.services import boq as boqlib, quotation_pdf, company as companylib, flow, takeoff as takeofflib, quote_terms
+from app.services.cost_engine import D, split_payments
 
 router = APIRouter(tags=["Estimation"])
 WRITE = ("ADMIN", "PROJECT_MANAGER", "ESTIMATOR", "INTERIOR_DESIGNER")
@@ -65,6 +65,7 @@ def generate_boq(rid: str, version: int, params: BoqParams = BoqParams(), db: Se
     p = boqlib.normalize_params(raw, bool(companylib.get(db)["gst_enabled"]))
     inc = takeofflib.configured(db) if inc is None else inc
     p["include_takeoff"] = "true" if inc else "false"
+    qd = quote_terms.company_defaults(db); p["payment_schedule"], p["terms"] = qd["schedule"], qd["terms"]      # M26: the quotation keeps its own copy
     tk = takeofflib.for_design(db, rid, objects) if inc else {"lines": [], "skipped": []}
     try:
         items, warnings, totals = boqlib.build(objects, {c.sku: c for c in cat}, by_name, p, {s.id: s for s in db.query(m.Supplier)}, tk["lines"])
@@ -106,13 +107,79 @@ def _get(db: Session, bid: str) -> m.Boq:
 def get_boq(bid: str, db: Session = Depends(get_db), user: dict = Depends(require_roles(*READ))): return _out(db, _get(db, bid))
 
 
+# ── M26 payment schedule + terms ──────────────────────────────────────────────
+TERMS_EDIT = ("ADMIN", "PROJECT_MANAGER", "ESTIMATOR", "SALES")
+
+
+def _terms_lock(db: Session, b: m.Boq) -> str | None:
+    st = flow.boq_status(b)
+    if st == "APPROVED": return "This quotation is approved — its payment schedule and terms are final."
+    if st == "SUPERSEDED": return "This quotation was superseded by another version."
+    if db.query(m.Payment).filter_by(boq_id=b.id).count(): return "Payments are recorded against this quotation."
+    if db.query(m.Invoice).filter_by(boq_id=b.id).count(): return "Invoices are raised against this quotation."
+    return None
+
+
+def _terms_out(db: Session, b: m.Boq, user: dict | None = None) -> dict:
+    sched = quote_terms.schedule_of(b.params)
+    shares = split_payments(b.totals["grand_total"], [p for _, p in sched])
+    lock = _terms_lock(db, b)
+    return {"boq_id": b.id, "grand_total": b.totals["grand_total"], "own": isinstance(b.params.get("payment_schedule"), list),
+            "schedule": [{"label": l, "pct": p, "amount": _money(s)} for (l, p), s in zip(sched, shares)], "terms": quote_terms.terms_of(b.params),
+            "editable": lock is None and (user is None or user.get("role") in TERMS_EDIT + ("SUPER_ADMIN",)), "locked_reason": lock}
+
+
+@router.get("/boqs/{bid}/terms")
+def get_terms(bid: str, db: Session = Depends(get_db), user: dict = Depends(require_roles(*READ))):
+    return _terms_out(db, _get(db, bid), user)
+
+
+class TermsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schedule: list[dict]
+    terms: list[str] = []
+
+
+@router.put("/boqs/{bid}/terms")
+def put_terms(bid: str, body: TermsIn, db: Session = Depends(get_db), user: dict = Depends(require_roles(*TERMS_EDIT))):
+    b = _get(db, bid); lock = _terms_lock(db, b)
+    if lock: raise HTTPException(409, lock)
+    try: sched, terms = quote_terms.clean_schedule(body.schedule), quote_terms.clean_terms(body.terms)
+    except quote_terms.TermsError as e: raise HTTPException(422, str(e))
+    b.params = {**b.params, "payment_schedule": sched, "terms": terms}          # new dict: JSON columns only save on reassignment
+    proj = flow.project_of_boq(db, b)
+    summary = ", ".join(r["label"] + " " + r["pct"] + "%" for r in sched)
+    flow.event(db, proj.id, "QUOTATION", f"{flow.quote_no(proj.project_number, b)}: payment schedule / terms changed ({summary})", user, "BOQ", b.id)
+    db.commit(); return _terms_out(db, b, user)
+
+
+@router.get("/settings/quote-terms")
+def get_default_terms(db: Session = Depends(get_db), user: dict = Depends(require_roles(*READ))):
+    return quote_terms.company_defaults(db)
+
+
+@router.put("/settings/quote-terms")
+def put_default_terms(body: TermsIn, db: Session = Depends(get_db), user: dict = Depends(require_roles("ADMIN", "PROJECT_MANAGER"))):
+    try: return quote_terms.save_company_defaults(db, body.schedule, body.terms, user.get("name"))
+    except quote_terms.TermsError as e: raise HTTPException(422, str(e))
+
+
+@router.delete("/settings/quote-terms")
+def reset_default_terms(db: Session = Depends(get_db), user: dict = Depends(require_roles("ADMIN", "PROJECT_MANAGER"))):
+    return quote_terms.reset_company_defaults(db)
+
+
 @router.get("/boqs/{bid}/quotation.pdf")
-def quotation(bid: str, db: Session = Depends(get_db), user: dict = Depends(require_roles(*READ))):
+def quotation(bid: str, photos: bool = True, db: Session = Depends(get_db), user: dict = Depends(require_roles(*READ))):
+    from app.services import photos as photolib
     b = _get(db, bid); out = _out(db, b)
+    skus = {i["sku"] for i in out["items"] if i.get("sku")}
+    thumbs = {it.sku: photolib.path(it.photo) for it in db.query(m.FurnitureItem).filter(m.FurnitureItem.sku.in_(skus), m.FurnitureItem.photo.isnot(None))} if photos and skus else {}
+    thumbs = {k: v for k, v in thumbs.items() if v}
     room = db.get(m.Room, b.room_id); project = db.get(m.Project, room.project_id); client = db.get(m.Client, project.client_id) if project.client_id else None
     pdf = quotation_pdf.render(quotation_no=out["quotation_no"], issued=b.created_at, boq=out, items=out["items"],
                                project={"name": project.name, "project_number": project.project_number}, room={"name": room.name},
                                client={"name": client.name, "company": client.company, "address": client.address, "phone": client.phone, "email": client.email, "city": client.city} if client else None,
-                               design_version=b.design_version, company=companylib.get(db))
+                               design_version=b.design_version, company=companylib.get(db), photos=thumbs)
     fname = re.sub(r"[^A-Za-z0-9._-]", "-", out["quotation_no"]) + ".pdf"
     return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{fname}"', "X-Content-Type-Options": "nosniff"})

@@ -1,4 +1,4 @@
-"""Rule-based layouts for every common room type: bedroom, living, dining, kitchen, study.
+"""Rule-based layouts for every common room type: bedroom, living, dining, kitchen, study, bathroom, utility.
 
 Deterministic interior rules, no LLM (constraint 2). Each planner proposes positions from simple rules (against a wall, facing pairs,
 clearances in front of units, chairs around a table, counter runs), every proposal is checked incrementally (inside the room, under the
@@ -21,8 +21,9 @@ from .geometry import DOOR_HEAD, WALL_MOUNTED, Obj, Room, area_overlap, door_zon
 
 G = 50                               # gap left between a unit and the wall
 ROOM_KIND = {"MASTER_BEDROOM": "BEDROOM", "BEDROOM": "BEDROOM", "KIDS_BEDROOM": "BEDROOM", "GUEST_BEDROOM": "BEDROOM",
-             "LIVING": "LIVING", "DINING": "DINING", "KITCHEN": "KITCHEN", "STUDY": "STUDY"}
-KINDS = ("BEDROOM", "LIVING", "DINING", "KITCHEN", "STUDY")
+             "LIVING": "LIVING", "DINING": "DINING", "KITCHEN": "KITCHEN", "STUDY": "STUDY", "BATHROOM": "BATHROOM", "TOILET": "BATHROOM",
+             "UTILITY": "UTILITY", "LAUNDRY": "UTILITY"}
+KINDS = ("BEDROOM", "LIVING", "DINING", "KITCHEN", "STUDY", "BATHROOM", "UTILITY")
 
 # slot → catalogue categories (case-insensitive, exact); the first alias that has items wins
 SLOTS = {
@@ -32,16 +33,27 @@ SLOTS = {
     "dining_table": ("dining table", "dining"), "dining_chair": ("dining chair", "chair"), "crockery": ("crockery", "crockery unit"),
     "base": ("kitchen",), "tall": ("kitchen",), "desk": ("study", "desk"), "desk_chair": ("office chair", "study chair", "chair"),
     "sink": ("kitchen sink",), "hob": ("kitchen hob",), "wall_unit": ("kitchen wall",), "filler": ("kitchen filler",),
+    # M32 bathroom + utility
+    "wc": ("wc", "toilet", "water closet"), "vanity": ("vanity", "vanity unit", "washbasin", "wash basin"), "shower": ("shower enclosure", "shower"),
+    "mirror": ("mirror cabinet", "bathroom mirror"), "linen": ("linen cabinet", "bathroom storage"),
+    "washer": ("washing machine",), "utility_base": ("utility base", "utility cabinet"), "utility_tall": ("utility tall", "broom cabinet"),
+    "utility_wall": ("utility wall",),
 }
 LABEL = {"bed": "Bed", "wardrobe": "Wardrobe", "bedside": "Bedside table", "dresser": "Dresser", "sofa": "Sofa", "tv": "TV unit",
          "coffee": "Coffee table", "armchair": "Armchair", "bookshelf": "Bookshelf", "dining_table": "Dining table", "dining_chair": "Dining chair",
          "crockery": "Crockery unit", "base": "Kitchen base unit", "tall": "Kitchen tall unit", "desk": "Study desk", "desk_chair": "Desk chair",
-         "sink": "Sink unit", "hob": "Hob unit", "wall_unit": "Wall cabinet", "filler": "Filler panel"}
-REQUIRED = {"BEDROOM": ("bed", "wardrobe"), "LIVING": ("sofa", "tv"), "DINING": ("dining_table", "dining_chair"), "KITCHEN": ("base",), "STUDY": ("desk",)}
+         "sink": "Sink unit", "hob": "Hob unit", "wall_unit": "Wall cabinet", "filler": "Filler panel",
+         "wc": "WC", "vanity": "Vanity / washbasin", "shower": "Shower enclosure", "mirror": "Mirror cabinet", "linen": "Linen cabinet",
+         "washer": "Washing machine", "utility_base": "Utility base cabinet", "utility_tall": "Utility tall cabinet", "utility_wall": "Utility wall cabinet"}
+REQUIRED = {"BEDROOM": ("bed", "wardrobe"), "LIVING": ("sofa", "tv"), "DINING": ("dining_table", "dining_chair"), "KITCHEN": ("base",), "STUDY": ("desk",),
+            "BATHROOM": ("wc", "vanity"), "UTILITY": ("washer",)}
 OPTIONAL = {"BEDROOM": ("bedside", "dresser"), "LIVING": ("coffee", "armchair", "bookshelf"), "DINING": ("crockery",), "KITCHEN": ("tall", "sink", "hob", "wall_unit", "filler"),
-            "STUDY": ("desk_chair", "bookshelf")}
+            "STUDY": ("desk_chair", "bookshelf"), "BATHROOM": ("shower", "mirror", "linen"), "UTILITY": ("utility_base", "utility_tall", "utility_wall")}
 # clear zone kept in front of a unit (mm): doors/drawers open, you stand or sit there
-FRONT = {"wardrobe": 600, "dresser": 600, "sofa": 400, "tv": 600, "armchair": 400, "bookshelf": 600, "crockery": 600, "base": 1000, "tall": 1000, "desk": 750}
+FRONT = {"wardrobe": 600, "dresser": 600, "sofa": 400, "tv": 600, "armchair": 400, "bookshelf": 600, "crockery": 600, "base": 1000, "tall": 1000, "desk": 750,
+         "wc": 600, "vanity": 700, "shower": 600, "linen": 600, "washer": 700, "utility_base": 800, "utility_tall": 700}
+WC_SIDE = 200                        # clear elbow room each side of a WC (the 600 mm zone in front is widened by this)
+MIRROR_AT = 1200                     # default underside of a mirror cabinet over the vanity
 VIEW_MIN = 1500                      # sofa front ↔ TV front
 CHAIR_PULL = 400                     # room behind a dining chair to pull it out and sit
 SEAT_W = 600                         # table edge length per diner
@@ -584,8 +596,110 @@ def study(plan: Plan, cat, opts):
         first_fit(plan, "bookshelf", bk, walls_by_length(R), prefer="corner")
 
 
+# ── bathroom (M32) ───────────────────────────────────────────────────────────
+def door_walls(R: Room) -> set: return {o["wall"] for o in R.openings if o["kind"] == "DOOR"}
+
+
+def away_from_door(R: Room) -> list[str]:
+    """Walls ordered: no door on it first, the wall opposite a door before the door's side walls."""
+    dw = door_walls(R)
+    return sorted(walls_by_length(R), key=lambda w: (w in dw, not any(OPP[d] == w for d in dw)))
+
+
+def _bath_wc(plan: Plan, cat, prefer: str) -> Obj | None:
+    R = plan.room
+    for it in candidates(cat, "wc"):
+        for wall in away_from_door(R):
+            for pos in positions(R, it["length_mm"] + 2 * WC_SIDE, wall, prefer):
+                o = on_wall(plan, "wc", it, wall, pos + WC_SIDE); plan.ids["wc"] -= 1
+                z = front_zone(o, wall, FRONT["wc"])
+                z = Zone(z.poly.buffer(WC_SIDE, join_style=2).intersection(box(0, 0, R.length, R.width)), o.id)   # elbow room both sides
+                side = Zone(box(o.x - WC_SIDE, o.y - WC_SIDE, o.x + o.length + WC_SIDE, o.y + o.width + WC_SIDE).intersection(box(0, 0, R.length, R.width)), o.id)
+                if plan.ok(o, z) and not any(side.blocks(p) for p in plan.objs):
+                    plan.ids["wc"] += 1; plan.add(o, z, wall); plan.zones.append(side)
+                    plan.notes.append(f"{o.name} on the {wall_name(wall)} wall with {FRONT['wc']} mm clear in front and {WC_SIDE} mm each side"
+                                      + (" — not facing the door." if door_walls(R) and wall not in {OPP[d] for d in door_walls(R)} else "."))
+                    return o
+    plan.notes.append("WC left out: no wall keeps 600 mm in front and elbow room at the sides.")
+    return None
+
+
+def _bath_vanity(plan: Plan, cat, opts) -> Obj | None:
+    R = plan.room
+    v = first_fit(plan, "vanity", candidates(cat, "vanity"), away_from_door(R)[::-1] if door_walls(R) else walls_by_length(R))
+    if not v: return None
+    vw = plan.wall[v.id]; plan.notes.append(f"{v.name} on the {wall_name(vw)} wall" + (" near the door, so hands are washed on the way out." if vw in door_walls(R) else "."))
+    if want(opts, "mirror") and (mr := candidates(cat, "mirror")):
+        it = mr[0]; z0 = it.get("mount_mm") or MIRROR_AT
+        ml = min(it["length_mm"], along_len(v, vw)); pos = along_start(v, vw) + (along_len(v, vw) - ml) / 2
+        o = on_wall(plan, "mirror", {**it, "length_mm": ml, "mount_mm": z0}, vw, pos)
+        if (o.z or 0) <= top(v): o.z = top(v) + 300
+        if plan.ok(o): plan.add(o, None, vw); plan.notes.append(f"{o.name} over the vanity at {o.z:.0f} mm.")
+        else: plan.ids["mirror"] -= 1; plan.notes.append("Mirror cabinet left out: it doesn't fit over the vanity under the ceiling.")
+    return v
+
+
+def _bath_shower(plan: Plan, cat) -> Obj | None:
+    s = first_fit(plan, "shower", candidates(cat, "shower"), away_from_door(plan.room), prefer="corner", allow=())
+    if s: plan.notes.append(f"{s.name} in a corner on the {wall_name(plan.wall[s.id])} wall, away from the door.")
+    return s
+
+
+def bathroom(plan: Plan, cat, opts):
+    """Tries a few orders (shower first / fixtures first) and WC positions (corner / centred) and keeps the layout that places the WC and
+    vanity and then the most other fittings — a small bathroom only works when the big shower corner is chosen well."""
+    R = plan.room; shower = want(opts, "shower") and bool(candidates(cat, "shower"))
+    best, best_key = None, None
+    for order in (("shower", "wc", "vanity"), ("wc", "vanity", "shower"), ("wc", "shower", "vanity"), ("vanity", "shower", "wc")):
+        if not shower and order[0] == "shower": continue
+        for prefer in ("corner", "center"):
+            t = Plan(R, plan.kind)
+            for step in order:
+                if step == "wc" and candidates(cat, "wc"): _bath_wc(t, cat, prefer)
+                elif step == "vanity" and candidates(cat, "vanity"): _bath_vanity(t, cat, opts)
+                elif step == "shower" and shower: _bath_shower(t, cat)
+            if want(opts, "linen") and (ln := candidates(cat, "linen")): first_fit(t, "linen", ln, away_from_door(R), prefer="corner")
+            got = {t.slot_of[o.id][0] for o in t.objs}
+            key = (("wc" in got) + ("vanity" in got), ("shower" in got), len(t.objs))
+            if best_key is None or key > best_key: best, best_key = t, key
+    plan.adopt(best); plan.notes.extend(best.notes)
+
+
+# ── utility / laundry (M32) ──────────────────────────────────────────────────
+def utility(plan: Plan, cat, opts):
+    R = plan.room; walls = away_from_door(R)
+    w = first_fit(plan, "washer", candidates(cat, "washer"), walls, prefer="corner", allow=("utility_base*",)) if candidates(cat, "washer") else None
+    if not w: return
+    ww = plan.wall[w.id]; plan.notes.append(f"{w.name} in the corner of the {wall_name(ww)} wall (16A socket + water inlet/outlet there).")
+    run = [w]
+    if want(opts, "utility_base") and (bases := candidates(cat, "utility_base")):
+        for it in sorted(bases, key=lambda c: -c["length_mm"]):
+            while True:
+                end = max(along_start(o, ww) + along_len(o, ww) for o in run); start = min(along_start(o, ww) for o in run)
+                placed = None
+                for pos in (end, start - it["length_mm"]):
+                    if pos < G - 0.01 or pos + it["length_mm"] > wall_len(R, ww) - G + 0.01: continue
+                    o = on_wall(plan, "utility_base", it, ww, pos); plan.ids["utility_base"] -= 1
+                    z = front_zone(o, ww, FRONT["utility_base"], ("washer",))
+                    if plan.ok(o, z): plan.ids["utility_base"] += 1; plan.add(o, z, ww); run.append(o); placed = o; break
+                if not placed or len(run) > 6: break
+        n = len(run) - 1
+        if n: plan.notes.append(f"{n} utility base cabinet(s) beside the washing machine on the same wall (one counter run for folding).")
+    if want(opts, "utility_tall") and (talls := candidates(cat, "utility_tall")):
+        t = first_fit(plan, "utility_tall", talls, [ww] + [x for x in walls if x != ww], prefer="corner")
+        if t: plan.notes.append(f"{t.name} (brooms, ironing board) on the {wall_name(plan.wall[t.id])} wall.")
+    if want(opts, "utility_wall") and (wu := candidates(cat, "utility_wall")):
+        it = wu[0]; z0 = it.get("mount_mm") or WALL_UNIT_AT; n = 0
+        for b in [o for o in run if plan.slot_of[o.id][0] == "utility_base"]:
+            l = min(it["length_mm"], along_len(b, ww)); pos = along_start(b, ww) + (along_len(b, ww) - l) / 2
+            o = on_wall(plan, "utility_wall", {**it, "length_mm": l, "mount_mm": z0}, ww, pos)
+            if plan.ok(o): plan.add(o, None, ww); n += 1
+            else: plan.ids["utility_wall"] -= 1
+        if n: plan.notes.append(f"{n} wall cabinet(s) over the utility counter at {z0:.0f} mm.")
+
+
 # ── entry point ──────────────────────────────────────────────────────────────
-PLANNERS = {"BEDROOM": bedroom, "LIVING": living, "DINING": dining, "KITCHEN": kitchen, "STUDY": study}
+PLANNERS = {"BEDROOM": bedroom, "LIVING": living, "DINING": dining, "KITCHEN": kitchen, "STUDY": study, "BATHROOM": bathroom, "UTILITY": utility}
 
 
 def want(opts: dict, slot: str) -> bool: return slot not in set(opts.get("skip") or [])
@@ -664,7 +778,7 @@ def plan(room: Room, room_type: str, catalogue: list[dict], options: dict | None
     styles: style words from the brief (preferred items); options['tier']: BUDGET | BALANCED | PREMIUM; budget + cost(objs)->Decimal: fit the total."""
     kind = kind_of(room_type) or ((room_type or "").upper() if (room_type or "").upper() in KINDS else None)
     if not kind:
-        raise LayoutError(f"Automatic layouts cover bedrooms, living, dining, kitchen and study rooms — not {room_type}. "
+        raise LayoutError(f"Automatic layouts cover bedrooms, living, dining, kitchen, study, bathroom and utility rooms — not {room_type}. "
                           "Pick a layout type, or place items by hand in the 3D editor.")
     opts = options or {}; p = Plan(room, kind)
     tier = (opts.get("tier") or "BALANCED").upper()

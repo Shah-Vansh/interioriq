@@ -13,7 +13,7 @@ export interface POLine { id: string; item_id: string; sku: string; description:
 export interface PO { id: string; po_number: string; status: 'DRAFT' | 'ISSUED' | 'PARTIAL' | 'RECEIVED' | 'CANCELLED'; project_id: string; project_number: string; project_name: string; boq_id: string
   supplier_id: string; supplier_name: string; supplier_phone: string | null; expected_on: string | null; notes: string | null; total: string; lines_count: number; received_pct: number
   created_at: string; issued_at: string | null; lines?: POLine[] }
-export interface ProcureResult { created: PO[]; allocated_from_stock: { sku: string; qty: number }[]; unassigned: string[]; manual: string[]; nothing_to_do: boolean }
+export interface ProcureResult { created: PO[]; allocated_from_stock: { sku: string; qty: number }[]; unassigned: string[]; manual: string[]; supplier_quotes_used?: string[]; nothing_to_do: boolean }
 export interface Panel { name: string; length: number; width: number; qty: number; thickness: number; edge_m: number }
 export interface CutList { size: { length: number; depth: number; height: number }; panels: Panel[]; sheets: Record<string, { board: string; sheets: number; utilisation_pct: number }>; edge_band_m: number; basis: string }
 export interface WorkOrder { id: string; wo_number: string; project_id: string; project_number: string; project_name: string; boq_id: string; sku: string | null; description: string; unit_no: number; stage: string; cut_list: CutList; updated_at: string }

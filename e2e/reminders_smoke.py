@@ -139,6 +139,16 @@ with sync_playwright() as p:
     except Exception: page.screenshot(path=f"{SHOTS}/reminder_drawer_fail.png", full_page=True)
     check("lead drawer has WhatsApp + Remind on the follow-up", fx.get_by_role("button", name="WhatsApp the lead").count() == 1
           and fx.get_by_role("button", name="Remind Priya Mehta on WhatsApp").count() == 1)
+    # M31: a weekly call repeats when marked done
+    fx.get_by_label("Follow-up type").select_option("CALL"); fx.get_by_label("Follow-up note").fill(f"Weekly nudge {RUN}"); fx.get_by_label("Follow-up repeat").select_option("7")
+    fx.get_by_role("button", name="Schedule follow-up").click(); fx.get_by_test_id("repeat-tag").first.wait_for()
+    check("repeating follow-up shows 'every week'", "every week" in fx.get_by_test_id("repeat-tag").first.inner_text())
+    weekly = fx.locator("li", has_text=f"Weekly nudge {RUN}")
+    weekly.get_by_role("button", name="Done Call").click(); dd = page.get_by_role("dialog", name="Follow-up done"); dd.wait_for()
+    check("done dialog says the next one is booked automatically", dd.get_by_test_id("repeat-note").count() == 1 and dd.get_by_label("Next follow-up time").count() == 0)
+    dd.get_by_label("Outcome").fill("Left a message"); dd.get_by_role("button", name="Save").click(); dd.wait_for(state="detached"); page.wait_for_timeout(1000)
+    opn = [f for f in c.get(f"{API}/leads/{lead['id']}", headers=H).json()["follow_ups"] if f["status"] == "OPEN" and f["note"] == f"Weekly nudge {RUN}"]
+    check("next weekly call was booked, still repeating", len(opn) == 1 and opn[0]["repeat_days"] == 7)
     check("no page errors", not problems, "; ".join(problems[:5]))
     br.close()
 

@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -163,6 +164,7 @@ class GenerateIn(BaseModel):
     prompt: str = Field(default="", max_length=2000); catalogue_filter_in_stock: bool = True
     room_type: str | None = None                                            # lay the room out as another type (e.g. an OTHER room as a study)
     options: LayoutOptions = LayoutOptions()
+    budget: Decimal | None = Field(default=None, gt=0, le=1_000_000_000)    # M35: set by the design chat; else read from the brief
 
 @router.get("/layouts/meta", tags=["Design"])
 def layouts_meta(user: dict = Depends(current_user)):
@@ -182,6 +184,7 @@ def generate(rid: str, b: GenerateIn, db: Session = Depends(get_db), user: dict 
     everything = [as_dict(f) for f in _placeable(db).order_by(m.FurnitureItem.created_at)]
     cat = [as_dict(f) for f in _placeable(db).filter(m.FurnitureItem.stock > 0).order_by(m.FurnitureItem.created_at)] if b.catalogue_filter_in_stock else everything
     if b.options.skip and (bad := [s for s in b.options.skip if s not in layouts.SLOTS]): raise HTTPException(422, f"Unknown item(s) to skip: {', '.join(bad)}")
+    if b.budget is not None: req = {**req, "budget": float(b.budget)}
     try:
         grand = lambda objs: compute([Line(Decimal(1), Decimal(str(o.price))) for o in objs])["grand_total"]
         out = layouts.plan(_geo(db, rid, L, W, H), b.room_type or room.room_type, cat, b.options.model_dump(), all_items=everything,
@@ -197,6 +200,66 @@ def generate(rid: str, b: GenerateIn, db: Session = Depends(get_db), user: dict 
             "over_budget": bool(req.get("budget") and cost["grand_total"] > Decimal(str(req["budget"]))),
             "budget_gap": str(abs(cost["grand_total"] - Decimal(str(req["budget"]))).quantize(Decimal("0.01"))) if req.get("budget") else None}   # the browser never subtracts money
 
+# ── M35 design chat ─────────────────────────────────────────────────────────────
+class ChatIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message: str = Field(min_length=1, max_length=1000)
+    room_type: str | None = None
+    options: LayoutOptions = LayoutOptions()
+    budget: Decimal | None = Field(default=None, gt=0, le=1_000_000_000)
+    prompt: str = Field(default="", max_length=2000)
+    catalogue_filter_in_stock: bool = True
+
+
+def _catalogue_answer(db: Session, message: str, kind: str | None) -> tuple[str, list]:
+    """'Which wardrobes under 60k?' — answered from the catalogue itself (names, sizes, prices as stored), never invented."""
+    from app.services import design_chat as dc
+    from app.services.cost_engine import inr
+    p = message.lower(); words = dc._slot_words()
+    slot = next((s for w, s in words.items() if re.search(rf"\b{re.escape(w)}s?\b", p)), None)
+    cats = set(layouts.SLOTS.get(slot, ())) if slot else None
+    cap = dc.money(p) if re.search(r"\b(under|below|within|less than|upto|up to|max)\b", p) else None
+    style = next((s for s in dc.STYLE_WORDS if s in p), None)
+    q = _placeable(db)
+    rows = [f for f in q if (cats is None or (f.category or "").strip().lower() in cats) and (cap is None or Decimal(str(f.price)) <= cap)
+            and (style is None or style in (f.style or "").lower())]
+    rows.sort(key=lambda f: Decimal(str(f.price)))
+    what = (layouts.LABEL[slot].lower() + "s") if slot else "items"
+    if not rows: return f"No {what} in the catalogue" + (f" under Rs. {inr(cap)}" if cap else "") + (f" tagged {style}" if style else "") + ".", []
+    items = [{"sku": f.sku, "name": f.name, "category": f.category, "price": f"{Decimal(str(f.price)):.2f}", "size": f"{f.length_mm:g}×{f.width_mm:g}×{f.height_mm:g}",
+              "stock": f.stock or 0, "style": f.style} for f in rows[:8]]
+    return (f"{len(rows)} {what} in the catalogue" + (f" under Rs. {inr(cap)}" if cap else "") + (f" tagged {style}" if style else "")
+            + f" — cheapest Rs. {inr(rows[0].price)}" + (", showing 8." if len(rows) > 8 else ".")), items
+
+
+@router.post("/rooms/{rid}/design-chat", tags=["Design"])
+def design_chat(rid: str, b: ChatIn, db: Session = Depends(get_db), user: dict = Depends(require_roles("ADMIN", "PROJECT_MANAGER", "INTERIOR_DESIGNER"))):
+    """Chat → generator options (never geometry or money); re-generates the layout with them, or answers a catalogue question from the DB."""
+    from app.services import design_chat as dc
+    from app.services.cost_engine import inr
+    room = db.get(m.Room, rid)
+    if not room: raise HTTPException(404, "Room not found")
+    rt = b.room_type or room.room_type
+    kind = layouts.kind_of(rt) or ((rt or "").upper() if (rt or "").upper() in layouts.KINDS else None)
+    it = dc.interpret(b.message, kind)
+    base = {"source": it["source"], "options": b.options.model_dump(), "budget": None if b.budget is None else f"{b.budget:.2f}", "result": None, "items": []}
+    if it["question"]:
+        reply, items = _catalogue_answer(db, b.message, kind)
+        return {**base, "reply": reply, "items": items}
+    if not it["changes"]:
+        return {**base, "reply": "I didn't catch a change. Try: 'cheaper', 'premium', 'more modern', 'no armchair', 'add a bookshelf', 'under 2 lakh', "
+                                  "'L-shaped kitchen', '6 seater' — or ask 'which wardrobes under 60k?'."}
+    opts, budget, said = dc.apply(b.options.model_dump(), b.budget, it["changes"])
+    if not said: return {**base, "reply": "That's already how the layout is set up."}
+    try: res = generate(rid, GenerateIn(prompt=b.prompt, catalogue_filter_in_stock=b.catalogue_filter_in_stock, room_type=b.room_type, options=LayoutOptions(**opts), budget=budget), db, user)
+    except HTTPException as e: return {**base, "reply": f"Couldn't lay it out that way: {e.detail}"}
+    n = len(res["objects"]); total = res["cost"]["grand_total"]
+    msg = (f"{it['llm_reply']} " if it["llm_reply"] else "") + "Done — " + ", ".join(said) + f". New layout: {n} item(s), Rs. {inr(total)}"
+    if res.get("budget_gap"): msg += f" ({'over' if res['over_budget'] else 'under'} the budget by Rs. {inr(res['budget_gap'])})"
+    if not res["validation"]["valid"]: msg += " — it has problems, see the checks"
+    return {**base, "reply": msg + ".", "options": opts, "budget": None if budget is None else f"{budget:.2f}", "result": res}
+
+
 class ObjectIn(BaseModel):
     id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=120)
@@ -208,6 +271,12 @@ class ObjectIn(BaseModel):
     price: float = Field(default=0, ge=0)
     sku: str = Field(default="", max_length=64)
     z: float = Field(default=0, ge=0, le=5000)            # underside above the floor (wall cabinets); old designs have none → 0
+    rotation: float = Field(default=0, ge=-360, le=360)    # M30: degrees anticlockwise about the centre; stored 0 ≤ r < 360
+    colour: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")   # M30: finish colour shown in the 3D editor
+
+    @field_validator("rotation")
+    @classmethod
+    def _rot(cls, v): return round(v % 360, 2)
 
 class DesignBody(BaseModel):
     objects: list[ObjectIn] = Field(max_length=200)
@@ -223,7 +292,7 @@ class SaveDesign(DesignBody):
     tier: str = "Balanced"
 
 def _to_objs(items: list[ObjectIn]) -> list[geometry.Obj]:
-    return [geometry.Obj(**o.model_dump()) for o in items]
+    return [geometry.Obj(**{k: v for k, v in o.model_dump().items() if k in geometry.Obj.__dataclass_fields__}) for o in items]
 
 @router.post("/rooms/{rid}/designs/validate", tags=["Design"])
 def validate_design(rid: str, b: DesignBody, db: Session = Depends(get_db), user: dict = Depends(current_user)):

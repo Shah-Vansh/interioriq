@@ -8,19 +8,18 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from app.services.quotation_pdf import ACCENT, GREY, INK, _fonts
+from app.services.quotation_pdf import ACCENT, GREY, INK
 
 
 def render(*, company: dict, title: str, number: str, meta: list[tuple[str, str]], parties: list[tuple[str, list[str]]],
            header: list[str], rows: list[list[str]], widths: list[float], right_cols: tuple = (), totals: list[tuple[str, str]] = (),
            paragraphs: list[str] = (), signatures: tuple[str, str] = ("Received by (signature, name, date)", "Authorised signatory")) -> bytes:
-    reg, bold, latin_only = _fonts()
-    def t(x) -> str:
-        x = "" if x is None else str(x)
-        if latin_only: x = x.encode("cp1252", "replace").decode("cp1252")
-        return escape(x)
+    from app.services import pdf_fonts
+    F = pdf_fonts.get(); reg, bold = F["regular"], F["bold"]
+    def t(x) -> str: return escape(pdf_fonts.clean(x))
     def S(name, **k):
-        return ParagraphStyle(name, fontName=k.pop("fontName", reg), fontSize=k.pop("size", 9), leading=k.pop("lead", 12), textColor=k.pop("color", INK), **k)
+        return ParagraphStyle(name, fontName=k.pop("fontName", reg), fontSize=k.pop("size", 9), leading=k.pop("lead", 12), textColor=k.pop("color", INK),
+                              shaping=1 if F["shaping"] else 0, **k)
     body, small, h = S("b"), S("s", size=8, lead=10, color=GREY), S("h", size=10, lead=13, fontName=bold, spaceBefore=8, spaceAfter=3)
     cell, rcell, hcell = S("c", size=8.5, lead=11), S("r", size=8.5, lead=11, alignment=2), S("hc", size=8, lead=10, fontName=bold, color=colors.white)
     buf = io.BytesIO()
@@ -47,10 +46,10 @@ def render(*, company: dict, title: str, number: str, meta: list[tuple[str, str]
                              ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
     story.append(tbl)
     for p in paragraphs: story += [Spacer(1, 2*mm), Paragraph(t(p), body)]
-    story += [Spacer(1, 16*mm), Table([["", "", ""], [signatures[0], "", f"{signatures[1]} — {company['name']}"]], colWidths=[80*mm, 18*mm, 80*mm],
+    story += [Spacer(1, 16*mm), Table([["", "", ""], [Paragraph(t(signatures[0]), small), "", Paragraph(t(f"{signatures[1]} — {company['name']}"), small)]], colWidths=[80*mm, 18*mm, 80*mm],
                                       style=[("LINEABOVE", (0, 1), (0, 1), 0.5, INK), ("LINEABOVE", (2, 1), (2, 1), 0.5, INK), ("FONTSIZE", (0, 0), (-1, -1), 8)])]
     def foot(c, d):
         c.saveState(); c.setFont(reg, 7); c.setFillColor(GREY)
-        c.drawString(16*mm, 9*mm, t(f"{number} · {company['name']}")); c.drawRightString(A4[0] - 16*mm, 9*mm, f"Page {d.page}"); c.restoreState()
+        c.drawString(16*mm, 9*mm, pdf_fonts.clean(f"{number} · {company['name']}"), shaping=F["shaping"]); c.drawRightString(A4[0] - 16*mm, 9*mm, f"Page {d.page}"); c.restoreState()
     doc.build(story, onFirstPage=foot, onLaterPages=foot)
     return buf.getvalue()

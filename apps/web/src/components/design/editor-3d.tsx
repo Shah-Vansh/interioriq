@@ -11,7 +11,7 @@ import { api, ApiError, CatalogueItem, DesignDetail, DesignVersion, Measurement,
 import { ProjectRoomPicker } from '@/components/shared/project-room-picker'
 import {
   Obj, SNAP_MM, canRedo, canUndo, commitDrag, createHistory, displayHeight, duplicate, fromCatalogue, fromThreeCenter, gaps,
-  History, push, redo, replacePresent, rotate90, snap, toThree, undo,
+  History, push, redo, replacePresent, rotate90, rotateBy, snap, toThree, undo,
 } from '@/lib/editor-logic'
 import { cn, fmt } from '@/lib/utils'
 import { Camera } from 'lucide-react'
@@ -52,9 +52,9 @@ function Furniture({ o, selected, flagged, onDown, onMove, onUp }: {
   onDown: (id: string, p: THREE.Vector3) => void; onMove: (p: THREE.Vector3) => void; onUp: () => void
 }) {
   const [x, y, z] = toThree(o)
-  const base = COLOURS[o.category] ?? '#a8a29e'
+  const base = o.colour || (COLOURS[o.category] ?? '#a8a29e')
   return (
-    <group position={[x, y, z]}>
+    <group position={[x, y, z]} rotation={[0, ((o.rotation ?? 0) * Math.PI) / 180, 0]}>
       <mesh
         onPointerDown={(e: ThreeEvent<PointerEvent>) => {
           e.stopPropagation(); (e.target as any).setPointerCapture?.(e.pointerId)
@@ -252,7 +252,7 @@ export function Editor3D() {
     <div className="-m-6 flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
       {/* toolbar */}
       <div className="bg-white border-b border-stone-200 px-4 py-2 flex items-center gap-2 flex-wrap">
-        <ProjectRoomPicker onChange={s => setSel({ roomId: s.roomId, projectId: s.projectId })} />
+        <ProjectRoomPicker guard={() => !dirty || confirm('You have unsaved changes in this room. Discard them and switch?')} onChange={s => setSel({ roomId: s.roomId, projectId: s.projectId })} />
         <div className="w-px h-6 bg-stone-200 mx-1" />
         <button className={cn(tbtn, 'border-stone-200 hover:bg-stone-50')} onClick={actions.undo} disabled={!canUndo(hist)} title="Undo (Ctrl+Z)"><Undo2 className="w-3.5 h-3.5" />Undo</button>
         <button className={cn(tbtn, 'border-stone-200 hover:bg-stone-50')} onClick={actions.redo} disabled={!canRedo(hist)} title="Redo (Ctrl+Shift+Z)"><Redo2 className="w-3.5 h-3.5" />Redo</button>
@@ -333,8 +333,20 @@ export function Editor3D() {
                         onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                         className="w-full mt-0.5 border border-stone-200 rounded px-2 py-1 font-mono bg-stone-50 outline-none focus:border-amber-400" /></label>))}
                 </div>
+                <div className="grid grid-cols-2 gap-2 items-end">
+                  <label className="block"><span className="text-[10px] text-stone-400 uppercase">Rotation °</span>
+                    <input key={`${selected.id}-rot-${selected.rotation ?? 0}`} type="number" step={15} aria-label="Rotation degrees" defaultValue={selected.rotation ?? 0}
+                      onBlur={e => { const v = parseFloat(e.target.value); if (Number.isFinite(v) && v !== (selected.rotation ?? 0)) edit(o => rotateBy({ ...o, rotation: 0 }, v)) }}
+                      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                      className="w-full mt-0.5 border border-stone-200 rounded px-2 py-1 font-mono bg-stone-50 outline-none focus:border-amber-400" /></label>
+                  <div className="flex gap-1"><button className="flex-1 border border-stone-200 rounded py-1 hover:bg-stone-50" aria-label="Turn 15 degrees anticlockwise" onClick={() => edit(o => rotateBy(o, 15))}>⟲ 15°</button>
+                    <button className="flex-1 border border-stone-200 rounded py-1 hover:bg-stone-50" aria-label="Turn 15 degrees clockwise" onClick={() => edit(o => rotateBy(o, -15))}>⟳ 15°</button></div>
+                </div>
+                <div className="flex items-center gap-2"><span className="text-[10px] text-stone-400 uppercase">Colour</span>
+                  <input type="color" aria-label="Object colour" value={selected.colour || '#a8a29e'} onChange={e => { const v = e.target.value; edit(o => ({ ...o, colour: v })) }} className="w-8 h-6 border border-stone-200 rounded cursor-pointer" />
+                  {selected.colour && <button className="text-[11px] text-stone-500 hover:underline" onClick={() => edit(o => ({ ...o, colour: null }))}>Default</button>}</div>
                 <div className="bg-stone-50 border border-stone-100 rounded p-2 font-mono text-[11px] text-stone-600 space-y-0.5">
-                  <div>Size {selected.length}×{selected.width}×{selected.height} mm</div>
+                  <div>Size {selected.length}×{selected.width}×{selected.height} mm{selected.rotation ? ` · turned ${selected.rotation}°` : ''}</div>
                   {g && <><div>To west wall  {g.west} mm</div><div>To east wall  {g.east} mm</div><div>To south wall {g.south} mm</div><div>To north wall {g.north} mm</div></>}
                 </div>
                 <div className="flex gap-1.5">

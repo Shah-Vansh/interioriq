@@ -1,5 +1,5 @@
-"""Quotation PDF (ReportLab, zero cost). Built-in Helvetica => Latin text; set PDF_FONT_PATH for other scripts.
-Amounts use 'Rs.' because the built-in fonts have no rupee sign."""
+"""Quotation PDF (ReportLab, zero cost). Fonts come from services/pdf_fonts.py: an installed font with the rupee sign + Gujarati + Hindi
+(shaped with uharfbuzz) when one is found, else Helvetica (Latin text, amounts as 'Rs.')."""
 import io, os
 from datetime import timedelta
 from decimal import Decimal
@@ -16,7 +16,8 @@ from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Space
 from app.core.config import settings
 from app.services.cost_engine import D, inr, split_payments
 
-PAYMENT_SCHEDULE = [("Agreement signing", 30), ("Design approval", 20), ("Material procurement", 25), ("Installation complete", 20), ("Handover and final QC", 5)]
+from app.services.quote_terms import BUILTIN_SCHEDULE, BUILTIN_TERMS, schedule_of, terms_of
+PAYMENT_SCHEDULE = BUILTIN_SCHEDULE      # kept for old imports; each quotation now carries its own (quote_terms.schedule_of)
 TERMS = ["Prices are based on the approved design and are valid until the date shown.",
          "Any change to scope, materials or dimensions after approval may change the price.",
          "Material selection is finalised at design approval.",
@@ -26,26 +27,27 @@ INK, ACCENT, GREY = colors.HexColor("#1c1917"), colors.HexColor("#b45309"), colo
 
 
 def _fonts():
-    path = settings.PDF_FONT_PATH
-    if path and os.path.exists(path):
-        pdfmetrics.registerFont(TTFont("IQFont", path)); return "IQFont", "IQFont", False
-    return "Helvetica", "Helvetica-Bold", True
+    """(regular, bold, latin_only) — kept for old callers; see pdf_fonts.get() for the full picture."""
+    from app.services import pdf_fonts
+    f = pdf_fonts.get(); return f["regular"], f["bold"], not f["unicode"]
 
 
 def _pct(v) -> str:
     d = D(v); return format(d.quantize(Decimal(1)) if d == d.to_integral() else d.normalize(), "f")
 
 
-def render(*, quotation_no: str, issued, boq: dict, items: list[dict], project: dict, room: dict, client: dict | None, design_version: int, company: dict | None = None) -> bytes:
+def render(*, quotation_no: str, issued, boq: dict, items: list[dict], project: dict, room: dict, client: dict | None, design_version: int, company: dict | None = None,
+           photos: dict | None = None) -> bytes:
+    """photos: {sku: path to a thumbnail JPEG} — printed beside those lines (M28)."""
     C = company or {"name": settings.COMPANY_NAME, "address": settings.COMPANY_ADDRESS, "phone": settings.COMPANY_PHONE, "email": settings.COMPANY_EMAIL,
                     "gstin": settings.COMPANY_GSTIN, "quote_valid_days": settings.QUOTE_VALID_DAYS}
-    reg, bold, latin_only = _fonts()
+    from app.services import pdf_fonts
+    F = pdf_fonts.get(); reg, bold, RS = F["regular"], F["bold"], pdf_fonts.currency()
     def t(x) -> str:   # make text safe for the PDF font and for Paragraph markup
-        x = "" if x is None else str(x)
-        if latin_only: x = x.encode("cp1252", "replace").decode("cp1252")
-        return escape(x)
+        return escape(pdf_fonts.clean(x))
     def S(name, **k):
-        return ParagraphStyle(name, fontName=k.pop("fontName", reg), fontSize=k.pop("size", 9), leading=k.pop("lead", 12), textColor=k.pop("color", INK), **k)
+        return ParagraphStyle(name, fontName=k.pop("fontName", reg), fontSize=k.pop("size", 9), leading=k.pop("lead", 12), textColor=k.pop("color", INK),
+                              shaping=1 if F["shaping"] else 0, **k)
     body, small, h2 = S("b"), S("s", size=8, lead=10, color=GREY), S("h", size=11, lead=14, fontName=bold, spaceBefore=10, spaceAfter=4)
     cell, right = S("c", size=8.5, lead=11), S("r", size=8.5, lead=11, alignment=2)
     buf = io.BytesIO()
@@ -69,11 +71,17 @@ def render(*, quotation_no: str, issued, boq: dict, items: list[dict], project: 
                                                               ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e7e5e4")), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)])]
 
     story.append(Paragraph("Bill of quantities", h2))
-    rows = [["#", "Item", "Qty", "Rate (Rs.)", "Labour (Rs.)", "Amount (Rs.)"]]
+    rows = [["#", "Item", "Qty", f"Rate ({RS})", f"Labour ({RS})", f"Amount ({RS})"]]
     for i, it in enumerate(items, 1):
         desc = f'{t(it["description"])}' + (f'<br/><font size="7" color="#78716c">{t(it["sku"])}{" · " + t(it["material"]) if it["material"] else ""}</font>' if it["sku"] or it["material"] else "")
         qty = format(D(it["qty"]).normalize(), "f")
-        rows.append([str(i), Paragraph(desc, cell), Paragraph(f'{qty} {t(it["unit"])}', right), Paragraph(inr(it["rate"]), right), Paragraph(inr(it["labour"]) if D(it["labour"]) else "—", right), Paragraph(inr(it["total"]), right)])
+        ph = (photos or {}).get(it["sku"])
+        item_cell = Paragraph(desc, cell)
+        if ph:
+            from reportlab.platypus import Image as RLImage
+            item_cell = Table([[RLImage(str(ph), width=14*mm, height=14*mm, kind="proportional"), Paragraph(desc, cell)]], colWidths=[16*mm, 60*mm],
+                              style=[("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)])
+        rows.append([str(i), item_cell, Paragraph(f'{qty} {t(it["unit"])}', right), Paragraph(inr(it["rate"]), right), Paragraph(inr(it["labour"]) if D(it["labour"]) else "—", right), Paragraph(inr(it["total"]), right)])
     tbl = Table(rows, colWidths=[8*mm, 78*mm, 18*mm, 24*mm, 24*mm, 24*mm], repeatRows=1)
     tbl.setStyle(TableStyle([("FONTNAME", (0, 0), (-1, 0), bold), ("FONTNAME", (0, 1), (-1, -1), reg), ("FONTSIZE", (0, 0), (-1, -1), 8.5), ("BACKGROUND", (0, 0), (-1, 0), INK),
                              ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("ALIGN", (2, 0), (-1, 0), "RIGHT"), ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -87,7 +95,7 @@ def render(*, quotation_no: str, issued, boq: dict, items: list[dict], project: 
                ("Total before tax" if gst else "Total before discount", tt["pre_tax"]), (f'Discount ({_pct(p["discount_pct"])}%)', "-" + tt["discount"]), ("After discount", tt["after_discount"])]
     if gst: summary.append((f'GST ({_pct(p["gst_pct"])}%)', tt["gst"]))
     srows = [[Paragraph(t(a), cell), Paragraph("-" + inr(b[1:]) if str(b).startswith("-") else inr(b), right)] for a, b in summary]
-    srows.append([Paragraph(f'<font name="{bold}">{"Grand total (incl. GST)" if gst else "Grand total"}</font>', cell), Paragraph(f'<font name="{bold}">Rs. {inr(tt["grand_total"])}</font>', right)])
+    srows.append([Paragraph(f'<font name="{bold}">{"Grand total (incl. GST)" if gst else "Grand total"}</font>', cell), Paragraph(f'<font name="{bold}">{RS} {inr(tt["grand_total"])}</font>', right)])
     st = Table(srows, colWidths=[56*mm, 36*mm], hAlign="RIGHT")
     last = len(srows) - 1
     st.setStyle(TableStyle([("LINEABOVE", (0, 3), (-1, 3), 0.5, GREY), ("LINEABOVE", (0, last), (-1, last), 1, INK), ("BACKGROUND", (0, last), (-1, last), colors.HexColor("#fef3c7")),
@@ -95,20 +103,21 @@ def render(*, quotation_no: str, issued, boq: dict, items: list[dict], project: 
     story += [Spacer(1, 4*mm), KeepTogether([st])]
     if not gst: story.append(Paragraph("GST is not charged on this quotation.", S("ng", size=8, lead=10, color=GREY, alignment=2)))
 
-    shares = split_payments(tt["grand_total"], [pc for _, pc in PAYMENT_SCHEDULE])
-    prow = [["Milestone", "%", "Amount (Rs.)"]] + [[a, str(pc), Paragraph(inr(s), right)] for (a, pc), s in zip(PAYMENT_SCHEDULE, shares)]
+    sched = schedule_of(boq.get("params")); terms = terms_of(boq.get("params"))
+    shares = split_payments(tt["grand_total"], [pc for _, pc in sched])
+    prow = [["Milestone", "%", f"Amount ({RS})"]] + [[Paragraph(t(a), body), str(pc), Paragraph(inr(s), right)] for (a, pc), s in zip(sched, shares)]
     pt = Table(prow, colWidths=[90*mm, 20*mm, 40*mm], hAlign="LEFT")
     pt.setStyle(TableStyle([("FONTNAME", (0, 0), (-1, -1), reg), ("FONTNAME", (0, 0), (-1, 0), bold), ("FONTSIZE", (0, 0), (-1, -1), 8.5), ("LINEBELOW", (0, 0), (-1, 0), 0.5, GREY),
                             ("ALIGN", (1, 0), (1, -1), "RIGHT"), ("ALIGN", (2, 0), (2, 0), "RIGHT")]))
     story += [Spacer(1, 6*mm), KeepTogether([Paragraph("Payment schedule", h2), pt])]
-    story += [KeepTogether([Paragraph("Terms and conditions", h2)] + [Paragraph(f"{i}. {t(x)}", small) for i, x in enumerate(TERMS, 1)])]
+    if terms: story += [KeepTogether([Paragraph("Terms and conditions", h2)] + [Paragraph(f"{i}. {t(x)}", small) for i, x in enumerate(terms, 1)])]
 
-    sig = Table([["", "", ""], ["Accepted by client (signature and date)", "", f"For {C['name']}"]], colWidths=[78*mm, 20*mm, 78*mm], rowHeights=[16*mm, None])
+    sig = Table([["", "", ""], [Paragraph("Accepted by client (signature and date)", small), "", Paragraph(t(f"For {C['name']}"), small)]], colWidths=[78*mm, 20*mm, 78*mm], rowHeights=[16*mm, None])
     sig.setStyle(TableStyle([("LINEABOVE", (0, 1), (0, 1), 0.5, GREY), ("LINEABOVE", (2, 1), (2, 1), 0.5, GREY), ("FONTNAME", (0, 0), (-1, -1), reg), ("FONTSIZE", (0, 0), (-1, -1), 8), ("TEXTCOLOR", (0, 0), (-1, -1), GREY)]))
     story += [Spacer(1, 8*mm), KeepTogether([sig])]
 
     def footer(c, d):
         c.saveState(); c.setFont(reg, 7.5); c.setFillColor(GREY)
-        c.drawString(16*mm, 9*mm, f"{quotation_no} · {C['name']}"); c.drawRightString(A4[0] - 16*mm, 9*mm, f"Page {d.page}"); c.restoreState()
+        c.drawString(16*mm, 9*mm, pdf_fonts.clean(f"{quotation_no} · {C['name']}"), shaping=F["shaping"]); c.drawRightString(A4[0] - 16*mm, 9*mm, f"Page {d.page}"); c.restoreState()
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
     return buf.getvalue()

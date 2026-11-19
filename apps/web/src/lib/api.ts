@@ -88,7 +88,8 @@ export const api = {
 export interface Project { id: string; project_number: string; name: string; status: string }
 export interface Room { id: string; name: string; room_type: string }
 export interface Measurement { label: string; value: number; unit: string; source: string; confidence: number; verified: boolean }
-export interface PlacedObject { id: string; name: string; category: string; sku?: string; x: number; y: number; length: number; width: number; height: number; price: number; z?: number }
+export interface PlacedObject { id: string; name: string; category: string; sku?: string; x: number; y: number; length: number; width: number; height: number; price: number; z?: number
+  rotation?: number; colour?: string | null }
 export interface Validation { valid: boolean; errors: string[]; warnings: string[]; occupancy: number; flagged?: string[] }
 export interface GenerateResult {
   requirements: { style: string; budget: number | null; priority: string[]; source?: string }
@@ -146,7 +147,7 @@ export type StockStatus = 'OK' | 'LOW' | 'OUT'
 export interface CatItem {
   id: string; sku: string; name: string; kind: CatKind; category: string; unit: string; price: string; stock: number; min_stock: number | null; stock_status: StockStatus
   length_mm: number | null; width_mm: number | null; height_mm: number | null; material: string | null; colour: string | null; description: string | null
-  mount_mm?: number | null; style?: string | null
+  mount_mm?: number | null; style?: string | null; has_photo?: boolean; photo_v?: string | null
   supplier_id: string | null; supplier_name: string | null; is_active: boolean; updated_at: string | null
   cost_price?: string | null; margin_pct?: string | null; cost_visible?: boolean
 }

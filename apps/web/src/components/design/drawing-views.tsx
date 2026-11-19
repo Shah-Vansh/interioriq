@@ -38,7 +38,7 @@ export function PlanSvg({ room, objects, children, openings = [], w = 760, h = 5
       <rect x={sx(0)} y={sy(room.W)} width={room.L * f.s} height={room.W * f.s} fill="#fafaf9" stroke="#292524" strokeWidth={4} />
       {[...objects].sort((a, b) => (a.z ?? 0) - (b.z ?? 0)).map(o => { const up = (o.z ?? 0) >= 1200, label = up ? '' : fitLabel(o.name, o.length * f.s, o.width * f.s)
         return <g key={o.id} data-plan-object={o.category} data-wall-mounted={up || undefined}><title>{o.name}{up ? ` — fixed ${o.z} mm above the floor` : ''}</title>
-        <rect x={sx(o.x)} y={sy(o.y + o.width)} width={o.length * f.s} height={o.width * f.s} fill={up ? '#bae6fd' : '#fde68a'} fillOpacity={up ? 0.35 : 0.55} stroke={up ? '#0369a1' : '#92400e'} strokeWidth={1.2} strokeDasharray={up ? '4 3' : undefined} />
+        <rect transform={o.rotation ? `rotate(${-o.rotation} ${sx(o.x + o.length / 2)} ${sy(o.y + o.width / 2)})` : undefined} x={sx(o.x)} y={sy(o.y + o.width)} width={o.length * f.s} height={o.width * f.s} fill={up ? '#bae6fd' : '#fde68a'} fillOpacity={up ? 0.35 : 0.55} stroke={up ? '#0369a1' : '#92400e'} strokeWidth={1.2} strokeDasharray={up ? '4 3' : undefined} />
         {label && <text x={sx(o.x + o.length / 2)} y={sy(o.y + o.width / 2)} fontSize={11} textAnchor="middle" dominantBaseline="middle" fill="#44403c">{label}</text>}</g> })}
       <OpeningsSvg ops={openings} L={room.L} W={room.W} sx={sx} sy={sy} s={f.s} />
       {children?.(sx, sy, f.s)}

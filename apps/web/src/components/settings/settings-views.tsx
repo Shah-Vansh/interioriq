@@ -95,7 +95,7 @@ export function RolesView() {
 
 // ── System ────────────────────────────────────────────────────────────────────
 interface Sys { python: string; platform: string; database: { kind: string; size_bytes: number | null; tables: number; rows: Record<string, number> }; storage: { path: string; writable: boolean }
-  ocr: Record<string, boolean>; pdf: boolean; dxf: boolean; ollama: { reachable: boolean; models: string[] }; token_minutes: number; warnings: string[]
+  ocr: Record<string, boolean>; pdf: boolean; pdf_fonts?: { rupee: boolean; gujarati: boolean; hindi: boolean; shaping: boolean; file: string | null; why: string }; dxf: boolean; ollama: { reachable: boolean; models: string[] }; token_minutes: number; warnings: string[]
   schema?: { revision: string | null; head: string | null; up_to_date: boolean; tool: string }
   jobs?: { backend: string; broker: string | null; queued_emails: number; sending_emails: number; waiting_documents: number; reading_documents: number } }
 const yes = (b: boolean) => <Pill tone={b ? 'green' : 'stone'} label={b ? 'available' : 'not installed'} />
@@ -112,7 +112,11 @@ export function SystemStatus() {
             <div className="flex justify-between"><dt>Database</dt><dd>{s.database.kind}{s.database.size_bytes != null ? ` · ${(s.database.size_bytes / 1048576).toFixed(1)} MB` : ''} · {s.database.tables} tables</dd></div>
             <div className="flex justify-between gap-3"><dt>Uploads folder</dt><dd className="text-right text-xs">{s.storage.path} {yes(s.storage.writable)}</dd></div><div className="flex justify-between"><dt>Sign-in lasts</dt><dd>{Math.round(s.token_minutes / 60)} h</dd></div></dl></Card>
           <Card title="Engines"><dl className="text-sm space-y-1.5" data-testid="engines">{[['PDF text layer', s.ocr.pdf_text_layer], ['PaddleOCR', s.ocr.paddleocr], ['RapidOCR', s.ocr.rapidocr], ['Tesseract', s.ocr.tesseract], ['PDF generation', s.pdf], ['DXF (CAD)', s.dxf], ['Local LLM (Ollama)', s.ollama.reachable]]
-            .map(([l, v]) => <div key={String(l)} className="flex justify-between"><dt>{l}</dt><dd>{yes(Boolean(v))}</dd></div>)}</dl></Card>
+            .map(([l, v]) => <div key={String(l)} className="flex justify-between"><dt>{l}</dt><dd>{yes(Boolean(v))}</dd></div>)}
+            {s.pdf_fonts && <div className="pt-2 mt-1 border-t border-stone-100 text-xs space-y-1" data-testid="pdf-fonts">
+              <div className="flex justify-between"><dt>PDF: rupee sign ₹</dt><dd>{yes(s.pdf_fonts.rupee)}</dd></div>
+              <div className="flex justify-between"><dt>PDF: Gujarati / Hindi text</dt><dd>{yes(s.pdf_fonts.gujarati && s.pdf_fonts.hindi && s.pdf_fonts.shaping)}</dd></div>
+              <p className="text-stone-500">{s.pdf_fonts.file ? `Font: ${s.pdf_fonts.file} (${s.pdf_fonts.why})` : s.pdf_fonts.why}</p></div>}</dl></Card>
         </div>
         {s.schema && s.jobs && <div className="grid md:grid-cols-2 gap-4">
           <Card title="Database schema"><dl className="text-sm space-y-1.5" data-testid="schema-status">

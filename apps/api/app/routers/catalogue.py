@@ -1,16 +1,17 @@
 """M9 Catalogue: furniture / materials / lighting / hardware items and suppliers. Prices and stock change only through append-only ledgers."""
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import require_roles
+from app.core.security import current_user, require_roles
 from app.models import models as m
-from app.services import catalogue as cat
+from app.services import catalogue as cat, flow, followups as fups, supplier_prices as spl
 from app.services.phone import PhoneError, normalize_phone
 
 router = APIRouter(tags=["Catalogue"])
@@ -94,6 +95,98 @@ def get_item(iid: str, db: Session = Depends(get_db), user: dict = Depends(requi
             "stock_history": [{"delta": s.delta, "balance": s.balance, "reason": s.reason, "user_name": s.user_name, "created_at": s.created_at.isoformat()} for s in moves]}
 
 
+# ── M34 per-supplier prices ─────────────────────────────────────────────────────
+def _sp_out(q: m.SupplierPrice, sups: dict, today=None) -> dict:
+    today = today or datetime.now(fups.local_tz()).date()
+    tz = fups.local_tz()
+    s = sups.get(q.supplier_id)
+    return {"id": q.id, "supplier_id": q.supplier_id, "supplier_name": s.name if s else None, "price": f"{Decimal(q.price):.2f}", "min_qty": q.min_qty,
+            "valid_from": spl._aw(q.valid_from).astimezone(tz).date().isoformat(), "valid_to": spl._aw(q.valid_to).astimezone(tz).date().isoformat() if q.valid_to else None,
+            "lead_days": q.lead_days, "note": q.note, "ended_reason": q.ended_reason, "valid_today": spl.valid(q, today, q.min_qty or 1),
+            "user_name": q.user_name, "created_at": q.created_at.isoformat() if q.created_at else None}
+
+
+class SupplierPriceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    supplier_id: str
+    price: Decimal = Field(gt=0, le=100_000_000, decimal_places=2)
+    min_qty: int = Field(default=1, ge=1, le=100000)
+    valid_from: date | None = None
+    valid_to: date | None = None
+    lead_days: int | None = Field(None, ge=0, le=365)
+    note: str | None = Field(None, max_length=300)
+
+
+@router.get("/catalogue/items/{iid}/supplier-prices")
+def list_supplier_prices(iid: str, qty: int = 1, db: Session = Depends(get_db), user: dict = Depends(require_roles(*COST_VIEW))):
+    it = _item(db, iid); sups = {s.id: s for s in db.query(m.Supplier)}
+    sid, rate, src, q = spl.best(db, it, max(1, qty))
+    return {"quotes": [_sp_out(x, sups) for x in spl.quotes(db, iid)],
+            "best": {"supplier_id": sid, "supplier_name": sups[sid].name if sid in sups else None, "rate": f"{rate:.2f}", "source": src, "quote_id": q.id if q else None, "qty": max(1, qty)}}
+
+
+@router.post("/catalogue/items/{iid}/supplier-prices", status_code=201)
+def add_supplier_price(iid: str, b: SupplierPriceIn, db: Session = Depends(get_db), user: dict = Depends(require_roles(*WRITE))):
+    it = _item(db, iid); s = db.get(m.Supplier, b.supplier_id)
+    if not s: raise HTTPException(404, "Supplier not found")
+    if s.is_active is False: raise HTTPException(409, f"{s.name} is marked inactive")
+    tz = fups.local_tz()
+    start = b.valid_from or datetime.now(tz).date()
+    if b.valid_to and b.valid_to < start: _422("valid_to is before valid_from")
+    q = m.SupplierPrice(item_id=it.id, supplier_id=s.id, price=b.price, min_qty=b.min_qty, valid_from=spl.at(start),
+                        valid_to=spl.at(b.valid_to).replace(hour=0) + timedelta(days=1, microseconds=-1) if b.valid_to else None,
+                        lead_days=b.lead_days, note=(b.note or "").strip() or None, user_id=user.get("sub"), user_name=user.get("name"))
+    db.add(q); db.commit()
+    return _sp_out(q, {s.id: s})
+
+
+class EndQuoteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=3, max_length=300)
+
+
+@router.post("/supplier-prices/{qid}/end")
+def end_supplier_price(qid: str, b: EndQuoteIn, db: Session = Depends(get_db), user: dict = Depends(require_roles(*WRITE))):
+    q = db.get(m.SupplierPrice, qid)
+    if not q: raise HTTPException(404, "Supplier price not found")
+    tz = fups.local_tz()
+    yesterday_end = spl.at(datetime.now(tz).date()) - timedelta(microseconds=1)
+    if q.valid_to is not None and spl._aw(q.valid_to) <= yesterday_end: raise HTTPException(409, "This quote has already ended")
+    q.valid_to = max(yesterday_end, spl._aw(q.valid_from) - timedelta(microseconds=1)); q.ended_reason = b.reason.strip()
+    db.commit(); return _sp_out(q, {s.id: s for s in db.query(m.Supplier)})
+
+
+# ── M28 photos ─────────────────────────────────────────────────────────────────
+@router.post("/catalogue/items/{iid}/photo")
+async def upload_photo(iid: str, file: UploadFile = File(...), db: Session = Depends(get_db), user: dict = Depends(require_roles(*WRITE))):
+    from app.services import photos
+    it = _item(db, iid)
+    data = await file.read(photos.MAX_BYTES + 1)
+    try: name = photos.save(it.id, data)
+    except photos.PhotoError as e: raise HTTPException(e.status, e.detail)
+    old = it.photo; it.photo = name; it.updated_at = flow.now(); db.commit()
+    if old and old != name: photos.remove(old)
+    return _out(db, it, user)
+
+
+@router.delete("/catalogue/items/{iid}/photo")
+def delete_photo(iid: str, db: Session = Depends(get_db), user: dict = Depends(require_roles(*WRITE))):
+    from app.services import photos
+    it = _item(db, iid); old = it.photo
+    it.photo = None; db.commit(); photos.remove(old)
+    return _out(db, it, user)
+
+
+@router.get("/catalogue/items/{iid}/photo")
+def get_photo(iid: str, size: str = "thumb", db: Session = Depends(get_db), user: dict = Depends(current_user)):
+    """Any signed-in staff member (the designer and 3D editor show photos too); clients don't see the catalogue."""
+    from app.services import photos
+    if user.get("role") == "CLIENT": raise HTTPException(403, "Not available in the client portal")
+    it = _item(db, iid); p = photos.path(it.photo, size)
+    if not p: raise HTTPException(404, "This item has no photo")
+    return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"})
+
+
 @router.patch("/catalogue/items/{iid}")
 def patch_item(iid: str, b: cat.ItemPatch, db: Session = Depends(get_db), user: dict = Depends(require_roles(*WRITE))):
     it = _item(db, iid)
@@ -166,6 +259,15 @@ def export(kind: str | None = None, status: str = "active", db: Session = Depend
     rows = [(i, sups.get(i.supplier_id)) for i in _query(db, kind, None, None, None, status, None)]
     name = f"catalogue-{(kind or 'all').lower()}.csv"
     return Response(cat.export_csv(rows, show_cost=sees_cost(user)), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/catalogue/export.xlsx")
+def export_xlsx(kind: str | None = None, status: str = "active", db: Session = Depends(get_db), user: dict = Depends(require_roles(*READ))):
+    sups = {s.id: s for s in db.query(m.Supplier)}
+    rows = [(i, sups.get(i.supplier_id)) for i in _query(db, kind, None, None, None, status, None)]
+    name = f"catalogue-{(kind or 'all').lower()}.xlsx"
+    return Response(cat.export_xlsx(rows, show_cost=sees_cost(user)), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.post("/catalogue/import")

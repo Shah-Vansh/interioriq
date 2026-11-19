@@ -106,11 +106,11 @@ with sync_playwright() as p:
     open(good, "w", encoding="utf-8").write(f"sku,name,category,unit,price,stock,min_stock,supplier\nPLY-{RUN},BWP ply 18mm,Plywood,sheet,\"2,850\",40,10,{SUP}\n"
                                             f"LAM-{RUN},Laminate 1mm,Laminate,sheet,1450,3,5,\n")
     page.get_by_role("button", name="Import CSV").click(); d = page.get_by_role("dialog", name="Import CSV")
-    d.get_by_label("CSV file", exact=True).set_input_files(bad); d.get_by_role("button", name="Preview").click()
+    d.get_by_label("CSV or Excel file", exact=True).set_input_files(bad); d.get_by_role("button", name="Preview").click()
     page.wait_for_selector("[data-testid=import-result]"); txt = d.inner_text()
     check("bad CSV: each problem is listed with its row number", "price is required" in txt and "unit must be one of" in txt and "2 with errors" in txt, txt[:300])
     check("bad CSV: the apply button is disabled", d.get_by_role("button", name="Fix the errors above, then preview again").is_disabled())
-    d.get_by_label("CSV file", exact=True).set_input_files(good); d.get_by_role("button", name="Preview").click()
+    d.get_by_label("CSV or Excel file", exact=True).set_input_files(good); d.get_by_role("button", name="Preview").click()
     page.wait_for_selector("text=Apply 2 changes"); d.get_by_role("button", name="Apply 2 changes").click()
     page.wait_for_selector("text=Imported: 2 created, 0 updated")
     check("nothing from the bad file was saved", not c.get(f"{API}/catalogue/items", params={"q": f"MDF-{RUN}", "status": "all"}, headers=H).json())
@@ -123,6 +123,18 @@ with sync_playwright() as p:
     with page.expect_download() as dl: page.get_by_role("button", name="Export CSV").click()
     exported = open(dl.value.path(), encoding="utf-8-sig").read()
     check("export CSV contains the imported rows", f"PLY-{RUN}" in exported and "2850.00" in exported and SUP in exported)
+    # M29: Excel import + export
+    from openpyxl import Workbook, load_workbook
+    wb = Workbook(); ws = wb.active; ws.append(["Item Code", "Item Name", "Category", "Unit", "Rate", "Qty"]); ws.append([f"HDF-{RUN}", "HDF 8mm", "HDF", "sheet", 1199.5, 12])
+    xl = os.path.join(TMP, "materials.xlsx"); wb.save(xl)
+    page.get_by_role("button", name="Import CSV").click(); d = page.get_by_role("dialog", name="Import CSV")
+    d.get_by_label("CSV or Excel file", exact=True).set_input_files(xl); d.get_by_role("button", name="Preview").click()
+    page.wait_for_selector("text=Apply 1 change"); d.get_by_role("button", name="Apply 1 change").click(); page.wait_for_selector("text=Imported: 1 created")
+    page.keyboard.press("Escape"); page.wait_for_selector(f"[data-sku='HDF-{RUN}']")
+    check("Excel import created the item with its decimal price", "1,199.50" in page.locator(f"[data-sku='HDF-{RUN}']").inner_text())
+    with page.expect_download() as dl: page.get_by_role("button", name="Export Excel").click()
+    import io as _io; xs = load_workbook(_io.BytesIO(open(dl.value.path(), 'rb').read())).active; skus = [r[0] for r in xs.iter_rows(min_row=2, values_only=True)]
+    check("Export Excel downloads a real workbook with the items", f"HDF-{RUN}" in skus and f"PLY-{RUN}" in skus)
     page.screenshot(path=f"{SHOTS}/catalogue_materials.png")
 
     # ── Supplier detail lists its items ──

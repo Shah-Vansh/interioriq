@@ -56,6 +56,7 @@ export function ProcurementView() {
           {res.allocated_from_stock.length > 0 && <p>Allocated from stock: {res.allocated_from_stock.map(x => `${x.sku} × ${x.qty}`).join(', ')}</p>}
           {res.created.map(p => <p key={p.id}>Drafted <Link href={`/execution/po?open=${p.id}`} className="font-semibold text-amber-800 underline">{p.po_number}</Link> for {p.supplier_name} · {inr(p.total)}</p>)}
           {res.unassigned.length > 0 && <p className="text-amber-800">No supplier set (assign one in the catalogue, then run again): {res.unassigned.join('; ')}</p>}
+          {(res.supplier_quotes_used ?? []).length > 0 && <p className="text-blue-800" data-testid="quotes-used">Ordered from a better supplier quote: {(res.supplier_quotes_used ?? []).join('; ')}</p>}
           {res.manual.length > 0 && <p className="text-stone-500">Not in the catalogue — procure outside the system: {res.manual.join(', ')}</p>}</div></Card>}
       </>}
     </div>

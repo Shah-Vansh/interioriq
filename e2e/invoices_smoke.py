@@ -44,7 +44,7 @@ with sync_playwright() as p:
     page.get_by_label("GSTIN", exact=True).fill("27AAPFU0939F1ZV")
     sw = page.get_by_role("switch", name="Charge GST by default (new quotations start with GST on)")
     if sw.get_attribute("aria-checked") == "true": sw.click()
-    page.get_by_role("button", name="Save").click(); page.wait_for_selector("[role=status]")
+    page.get_by_role("button", name="Save", exact=True).click(); page.wait_for_selector("[role=status]")
     check("company GST default can be switched off", sw.get_attribute("aria-checked") == "false")
 
     # BOQ screen: the switch starts OFF (company default) → BOQ without GST

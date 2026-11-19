@@ -24,7 +24,8 @@ def furniture_layout(name: str, L: float, W: float, objs: list[dict], openings=(
     d, m = _doc(); _shell(m, L, W); draw_openings(m, L, W, openings)
     for o in objs:
         x, y, l, w = o["x"], o["y"], o["length"], o["width"]
-        m.add_lwpolyline([(x, y), (x + l, y), (x + l, y + w), (x, y + w)], close=True, dxfattribs={"layer": "FURNITURE"})
+        from app.services.geometry import corners
+        m.add_lwpolyline(corners(o), close=True, dxfattribs={"layer": "FURNITURE"})              # M30: angled units drawn at their angle
         m.add_text(o["name"], dxfattribs={"layer": "TEXT", "height": 70, "insert": (x + 40, y + w / 2)})
     return _bytes(d)
 

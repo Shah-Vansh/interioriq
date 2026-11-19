@@ -47,6 +47,7 @@ def _on_wall(wall, along, L, W):
 
 def electrical(L, W, H, objs, openings=()) -> dict:
     pts, n = [], [0]
+    wet = False                                     # M32: bathrooms / utility rooms get no AC point
     def add(kind, label, x, y, h, note=""):
         n[0] += 1; pts.append({"id": f"E{n[0]}", "type": kind, "label": label, "x": round(x), "y": round(y), "height": h, "note": note})
     door = next((o for o in openings if o["kind"] == "DOOR"), None)
@@ -92,16 +93,27 @@ def electrical(L, W, H, objs, openings=()) -> dict:
             kitchen = True; add("SOCKET", "Chimney point (6A) above the hob", x + l / 2, y + w / 2, 2100); add("SOCKET", "16A hob point (induction)", x + l / 2, y + w / 2, 300)
         elif cat == "kitchen wall":
             kitchen = True; add("LIGHT", "Under-cabinet LED strip", x + l / 2, y + w / 2, round(o.get("z") or 1450))
+        elif cat in ("vanity", "vanity unit", "washbasin", "wash basin"):
+            wet = True; add("LIGHT", "Mirror light point over the vanity", x + l / 2, y + w / 2, 2000); add("SOCKET", "Shaver / hair-dryer socket (6A, IP44) beside the mirror", x + l + 150, y + w / 2, 1200)
+        elif cat in ("shower enclosure", "shower"):
+            wet = True; add("SOCKET", "Geyser point (16A) above the shower area", x + l / 2, y + w / 2, 2100)
+        elif cat in ("wc", "toilet", "water closet"):
+            wet = True; add("SOCKET", "Exhaust fan point (6A)", x + l / 2, y + w / 2, 2200)
+        elif cat == "washing machine":
+            wet = True; add("SOCKET", "16A washing-machine socket", x + l / 2, y + w / 2, 1000)
+        elif cat in ("utility base", "utility cabinet"):
+            add("SOCKET", "6A counter socket (iron)", x + l / 2, y + w / 2, 1100)
     hob = any((o.get("category") or "").lower() == "kitchen hob" for o in objs)
     if kitchen and not hob:
         base = [o for o in objs if (o.get("category") or "").lower() == "kitchen" and (o.get("height") or 0) < 1800]
         if base:
             o = max(base, key=lambda b: b["length"] * b["width"]); add("SOCKET", "Chimney point (6A) above the hob", o["x"] + o["length"] / 2, o["y"] + o["width"] / 2, 2100)
-    if not kitchen and not ac_done: add("AC", "AC point (16A)", L / 2, W, 2100, "No bed in the design: placed on the north wall centre.")
+    if not kitchen and not wet and not ac_done: add("AC", "AC point (16A)", L / 2, W, 2100, "No bed in the design: placed on the north wall centre.")
     return {"room": {"L": L, "W": W, "H": H}, "points": pts,
             "rules": ["Heights are to the centre of the plate from finished floor.", "Bedside sockets 150 mm beyond each side of the bed at 450 mm; 2-way switch at 900 mm.",
                       "AC point at 2100 mm on the headboard wall (else north wall).", "Wardrobes get an internal profile light; desks 2 sockets + data at 900 mm; TV units a TV point at 1100 mm.",
-                      "Kitchens: a counter socket at 1100 mm per base unit, a 16A appliance socket at 300 mm per tall unit, chimney (2100) + 16A hob point over the hob unit, a socket under the sink, an LED strip under each wall cabinet; no AC point."],
+                      "Kitchens: a counter socket at 1100 mm per base unit, a 16A appliance socket at 300 mm per tall unit, chimney (2100) + 16A hob point over the hob unit, a socket under the sink, an LED strip under each wall cabinet; no AC point.",
+                      "Bathrooms: mirror light at 2000 mm + IP44 shaver socket at 1200 mm by the vanity, geyser point at 2100 mm over the shower, exhaust fan point at 2200 mm; utility: 16A washing-machine socket at 1000 mm; no AC point in wet rooms."],
             "assumptions": [p["note"] for p in pts if p["note"].startswith("ASSUMED")]}
 
 

@@ -1,5 +1,7 @@
 'use client'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { AuthImg, ItemPhoto, photoPath } from '@/components/catalogue/photo'
+import { SupplierPrices } from '@/components/catalogue/supplier-prices'
 import { AlertCircle, Archive, ArchiveRestore, CheckCircle2, Download, FileUp, Loader2, Minus, Plus, Search, X } from 'lucide-react'
 import { api, ApiError, CatItem, CatItemDetail, CatKind, CatMeta, ImportResult, session, Supplier, downloadFile } from '@/lib/api'
 import { KINDS, canEditCatalogue, canMoveStock, cleanPrice, csvTemplate, dimsText, inr, parseDelta, stockText } from '@/lib/catalogue-logic'
@@ -61,6 +63,7 @@ export function CatalogueView({ kind }: { kind: CatKind }) {
   const attention = items?.filter(i => i.stock_status !== 'OK').length ?? 0
 
   const exportCsv = async () => { try { await downloadFile(`/catalogue/export.csv?kind=${kind}&status=${status}`, `catalogue-${kind.toLowerCase()}.csv`) } catch (e) { setError(errMsg(e)) } }
+  const exportXlsx = async () => { try { await downloadFile(`/catalogue/export.xlsx?kind=${kind}&status=${status}`, `catalogue-${kind.toLowerCase()}.xlsx`) } catch (e) { setError(errMsg(e)) } }
 
   return (
     <div className="space-y-5 max-w-[1400px]">
@@ -69,7 +72,8 @@ export function CatalogueView({ kind }: { kind: CatKind }) {
           <p className="text-sm text-stone-500 mt-0.5 max-w-2xl">{info.subtitle}</p></div>
         <div className="flex gap-2">
           <button onClick={exportCsv} className={ghost}><Download className="w-3.5 h-3.5" />Export CSV</button>
-          {canEdit && <button onClick={() => setOpen('import')} className={ghost}><FileUp className="w-3.5 h-3.5" />Import CSV</button>}
+          <button onClick={exportXlsx} className={ghost}><Download className="w-3.5 h-3.5" />Export Excel</button>
+          {canEdit && <button onClick={() => setOpen('import')} className={ghost}><FileUp className="w-3.5 h-3.5" />Import CSV / Excel</button>}
           {canEdit && <button onClick={() => setOpen('new')} className={primary}><Plus className="w-3.5 h-3.5" />Add {info.singular}</button>}
         </div>
       </div>
@@ -90,7 +94,7 @@ export function CatalogueView({ kind }: { kind: CatKind }) {
       <div className="bg-white border border-stone-200 rounded-lg shadow-sm overflow-hidden">
         {items === null ? <p className="p-8 text-center text-sm text-stone-400">Loading…</p>
           : items.length === 0 ? <p className="p-8 text-center text-sm text-stone-400">
-              {q || category || stock || status !== 'active' ? 'Nothing matches these filters.' : `No ${info.title.toLowerCase()} yet.${canEdit ? ' Add one, or import your price list as CSV.' : ''}`}</p>
+              {q || category || stock || status !== 'active' ? 'Nothing matches these filters.' : `No ${info.title.toLowerCase()} yet.${canEdit ? ' Add one, or import your price list (CSV or Excel).' : ''}`}</p>
           : <div className="overflow-x-auto"><table className="w-full text-sm">
               <thead><tr className="border-b border-stone-100 bg-stone-50">
                 {['SKU', 'Item', 'Category', ...(info.needsSize ? ['Size (L × W × H)'] : []), 'Unit price', ...(items.some(x => x.cost_visible) ? ['Cost · margin'] : []), 'Stock', 'Supplier'].map(h =>
@@ -98,8 +102,8 @@ export function CatalogueView({ kind }: { kind: CatKind }) {
               <tbody className="divide-y divide-stone-50">{items.map(i => (
                 <tr key={i.id} data-sku={i.sku} onClick={() => setOpen(i.id)} className={`hover:bg-stone-50 cursor-pointer ${i.is_active ? '' : 'opacity-60'}`}>
                   <td className="px-4 py-2.5 font-mono text-[11px] text-stone-500 whitespace-nowrap">{i.sku}</td>
-                  <td className="px-4 py-2.5"><p className="font-medium text-stone-900">{i.name}{!i.is_active && <span className="ml-2 text-[10px] uppercase font-semibold text-stone-500 bg-stone-100 px-1.5 py-0.5 rounded">Archived</span>}</p>
-                    {(i.material || i.colour) && <p className="text-[11px] text-stone-400">{[i.material, i.colour].filter(Boolean).join(' · ')}</p>}</td>
+                  <td className="px-4 py-2.5"><div className="flex items-center gap-2.5">{i.has_photo && <AuthImg path={photoPath(i)} alt="" className="w-9 h-9 rounded object-cover border border-stone-200 flex-shrink-0" />}<div><p className="font-medium text-stone-900">{i.name}{!i.is_active && <span className="ml-2 text-[10px] uppercase font-semibold text-stone-500 bg-stone-100 px-1.5 py-0.5 rounded">Archived</span>}</p>
+                    {(i.material || i.colour) && <p className="text-[11px] text-stone-400">{[i.material, i.colour].filter(Boolean).join(' · ')}</p>}</div></div></td>
                   <td className="px-4 py-2.5 text-xs text-stone-600">{i.category}</td>
                   {info.needsSize && <td className="px-4 py-2.5 text-xs text-stone-500 whitespace-nowrap">{dimsText(i) || '—'}</td>}
                   <td className="px-4 py-2.5 text-right whitespace-nowrap"><span className="font-semibold text-stone-900">{inr(i.price)}</span><span className="text-[11px] text-stone-400"> / {i.unit}</span></td>
@@ -297,6 +301,12 @@ function ItemDrawer({ id, categories, units, suppliers, canEdit, canStock, onClo
           </div>
         </div>
 
+        {it.cost_visible && <div className={section}><h3 className="text-xs font-semibold text-stone-700 uppercase tracking-wide">Supplier prices</h3>
+          <SupplierPrices itemId={it.id} unit={it.unit} suppliers={suppliers} canEdit={canEdit} /></div>}
+
+        <div className={section}><h3 className="text-xs font-semibold text-stone-700 uppercase tracking-wide">Photo</h3>
+          <ItemPhoto item={it} canEdit={canEdit} onChanged={() => { reload(); onChanged() }} /></div>
+
         <form onSubmit={saveDetails} className={section}>
           <h3 className="text-xs font-semibold text-stone-700 uppercase tracking-wide">Details</h3>
           <p className="text-[11px] text-stone-400">The SKU can't change: saved designs refer to it.</p>
@@ -327,14 +337,15 @@ function ImportCsv({ kind, onClose, onApplied }: { kind: CatKind; onClose: () =>
   const show = (v: unknown) => (v == null || v === '' ? '—' : String(v))
   const changed = res ? res.summary.create + res.summary.update : 0
   return (
-    <Drawer label="Import CSV" title={`Import ${KINDS[kind].title.toLowerCase()} from CSV`} onClose={onClose} wide>
+    <Drawer label="Import CSV / Excel" title={`Import ${KINDS[kind].title.toLowerCase()} from CSV or Excel`} onClose={onClose} wide>
       <div className="text-xs text-stone-500 space-y-1">
         <p>Columns: <code className="text-stone-700">sku, name, category, price</code> are required; also <code className="text-stone-700">unit, stock, min_stock, length_mm, width_mm, height_mm, material, colour, supplier, description, kind, mount_mm, style</code>.</p>
+        <p>Excel: the first sheet of an .xlsx workbook is read, with the same columns. Old .xls files: save them as .xlsx first.</p>
         <p>Existing SKUs are updated (price changes and stock differences are recorded in the history); new SKUs are created. If any row has an error, <b>nothing</b> is imported.</p>
         <button onClick={template} className="text-amber-700 hover:underline font-medium">Download a template</button>
       </div>
       <div className="flex gap-2 items-center flex-wrap">
-        <input type="file" accept=".csv,text/csv" aria-label="CSV file" onChange={e => { setFile(e.target.files?.[0] ?? null); setRes(null); setError('') }} className="text-sm" />
+        <input type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" aria-label="CSV or Excel file" onChange={e => { setFile(e.target.files?.[0] ?? null); setRes(null); setError('') }} className="text-sm" />
         <button onClick={() => send(false)} disabled={!file || busy} className={ghost}>{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}Preview</button>
       </div>
       {error && <Alert>{error}</Alert>}

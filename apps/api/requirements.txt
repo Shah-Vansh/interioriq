@@ -9,6 +9,8 @@ shapely
 pillow
 pypdfium2
 reportlab                 # quotation PDFs
+uharfbuzz                 # shapes Gujarati / Hindi text in PDFs (free; services/pdf_fonts.py)
+openpyxl                  # catalogue import/export as Excel .xlsx
 rapidocr-onnxruntime   # default local OCR (PaddleOCR models via ONNX, no model download)
 pytest
 httpx

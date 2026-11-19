@@ -146,7 +146,7 @@ def item_out(it: m.FurnitureItem, supplier: m.Supplier | None = None, show_cost:
             "margin_pct": margin_pct(it.price, it.cost_price) if show_cost else None, "cost_visible": show_cost,
             "price": f"{Decimal(it.price):.2f}", "stock": it.stock or 0, "min_stock": it.min_stock, "stock_status": stock_status(it),
             "length_mm": it.length_mm, "width_mm": it.width_mm, "height_mm": it.height_mm, "material": it.material, "colour": it.colour,
-            "mount_mm": it.mount_mm, "style": it.style,
+            "mount_mm": it.mount_mm, "style": it.style, "has_photo": bool(getattr(it, "photo", None)), "photo_v": (it.photo or "")[-6:] if getattr(it, "photo", None) else None,
             "description": it.description, "supplier_id": it.supplier_id, "supplier_name": supplier.name if supplier else None,
             "is_active": it.is_active is not False, "updated_at": it.updated_at.isoformat() if it.updated_at else None}
 
@@ -214,6 +214,65 @@ def export_csv(rows: list[tuple[m.FurnitureItem, m.Supplier | None]], show_cost:
     return "﻿" + out.getvalue()        # BOM so Excel opens ₹/accents correctly
 
 
+# ── M29 Excel ─────────────────────────────────────────────────────────────────
+XLSX_MAGIC = b"PK\x03\x04"
+XLS_MAGIC = b"\xd0\xcf\x11\xe0"          # old binary .xls (Excel 97-2003)
+
+
+def _cell(v) -> str:
+    """An Excel cell as the text the CSV importer expects (whole numbers without '.0', no float noise)."""
+    from datetime import date, datetime
+    if v is None: return ""
+    if isinstance(v, bool): return "true" if v else "false"
+    if isinstance(v, float):
+        if v.is_integer(): return str(int(v))
+        return format(Decimal(repr(v)).normalize(), "f")
+    if isinstance(v, (datetime, date)): return v.isoformat()[:10]
+    return str(v).strip()
+
+
+def xlsx_to_csv(data: bytes) -> bytes:
+    """First worksheet of an .xlsx → CSV bytes, so Excel files go through exactly the same validation as CSV."""
+    if data[:4] == XLS_MAGIC: raise CatalogueError(422, "This is an old .xls file. In Excel use File → Save As → 'Excel Workbook (.xlsx)' or 'CSV UTF-8'.")
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    except ImportError: raise CatalogueError(422, "Excel import needs the 'openpyxl' package (pip install openpyxl) — or save the sheet as CSV.")
+    except Exception: raise CatalogueError(422, "That file is not a readable Excel workbook (.xlsx).")
+    try:
+        ws = wb.worksheets[0]; out = io.StringIO(); w = csv.writer(out); n = 0
+        for row in ws.iter_rows(values_only=True):
+            vals = [_cell(v) for v in row]
+            while vals and vals[-1] == "": vals.pop()
+            if not vals:
+                if n: w.writerow([])          # keep row numbers aligned with Excel's
+                continue
+            w.writerow(vals); n += 1
+            if n > 20000: raise CatalogueError(413, "At most 20,000 rows per import")
+    finally: wb.close()
+    text = out.getvalue().rstrip("\r\n")
+    if not text: raise CatalogueError(422, "The first sheet of the workbook is empty")
+    return text.encode("utf-8")
+
+
+def export_xlsx(rows: list[tuple[m.FurnitureItem, m.Supplier | None]], show_cost: bool = True) -> bytes:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    lines = list(csv.reader(io.StringIO(export_csv(rows, show_cost).lstrip("\ufeff"))))
+    wb = Workbook(); ws = wb.active; ws.title = "Catalogue"
+    numeric = {"price", "cost", "stock", "min_stock", "length_mm", "width_mm", "height_mm", "mount_mm"}
+    for r, line in enumerate(lines):
+        if r == 0: ws.append(line); continue
+        ws.append([(float(v) if "." in v else int(v)) if line and lines[0][c] in numeric and v not in ("",) else v for c, v in enumerate(line)])
+    for cell in ws[1]: cell.font = Font(bold=True)
+    for col, name in enumerate(lines[0], 1):
+        if name in ("price", "cost"):
+            for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
+                row[0].number_format = "#,##0.00"
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO(); wb.save(buf); return buf.getvalue()
+
+
 def _decode(data: bytes) -> str:
     for enc in ("utf-8-sig", "cp1252"):
         try: return data.decode(enc)
@@ -224,7 +283,8 @@ def _decode(data: bytes) -> str:
 def import_csv(db: Session, data: bytes, default_kind: str, user: dict, *, apply: bool, filename: str = "CSV") -> dict:
     """All-or-nothing. Returns a preview of every row (CREATE / UPDATE with the exact changes / UNCHANGED) and every error with its row number.
     With apply=True and no errors the changes are written (price changes and stock differences go through the ledgers); with errors nothing is."""
-    if len(data) > MAX_BYTES: raise CatalogueError(413, f"CSV too large (max {MAX_BYTES // 1_000_000} MB)")
+    if len(data) > MAX_BYTES: raise CatalogueError(413, f"File too large (max {MAX_BYTES // 1_000_000} MB)")
+    if data[:4] in (XLSX_MAGIC, XLS_MAGIC) or filename.lower().endswith((".xlsx", ".xls")): data = xlsx_to_csv(data)     # M29: Excel → same path as CSV
     text = _decode(data)
     if not text.strip(): raise CatalogueError(422, "The file is empty")
     try: dialect = csv.Sniffer().sniff(text.splitlines()[0], delimiters=",;\t")

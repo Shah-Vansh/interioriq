@@ -2,8 +2,10 @@
 import { useEffect, useState } from 'react'
 import { api, Project, Room } from '@/lib/api'
 
-export function ProjectRoomPicker({ refreshKey = 0, onChange }: {
+export function ProjectRoomPicker({ refreshKey = 0, onChange, guard }: {
   refreshKey?: number
+  /** Called before the user switches project/room; return false to stay (e.g. unsaved edits). */
+  guard?: () => boolean
   onChange: (sel: { projectId: string; roomId: string; room: Room | null }) => void
 }) {
   const [projects, setProjects] = useState<Project[]>([])
@@ -21,11 +23,11 @@ export function ProjectRoomPicker({ refreshKey = 0, onChange }: {
   const sel = 'text-sm border border-stone-200 rounded px-3 py-1.5 bg-white outline-none focus:border-amber-400'
   return (
     <div className="flex gap-3 flex-wrap">
-      <select value={pid} onChange={e => setPid(e.target.value)} className={sel}>
+      <select aria-label="Project" value={pid} onChange={e => { if (!guard || guard()) setPid(e.target.value) }} className={sel}>
         {projects.length === 0 && <option value="">No projects yet</option>}
         {projects.map(p => <option key={p.id} value={p.id}>{p.project_number} · {p.name}</option>)}
       </select>
-      <select value={rid} onChange={e => setRid(e.target.value)} className={sel} disabled={!rooms.length}>
+      <select aria-label="Room" value={rid} onChange={e => { if (!guard || guard()) setRid(e.target.value) }} className={sel} disabled={!rooms.length}>
         {rooms.length === 0 && <option value="">No rooms yet</option>}
         {rooms.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
       </select>

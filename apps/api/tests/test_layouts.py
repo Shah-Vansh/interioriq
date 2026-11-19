@@ -133,8 +133,8 @@ def test_never_crashes_and_never_returns_an_invalid_layout_except_the_explained_
 
 def test_api_options_unsupported_rooms_and_overrides(client):
     h = hdr(client)
-    bath = room(client, h, "BATHROOM", 2400, 1800)
-    r = gen(client, h, bath); assert r.status_code == 422 and "bedrooms, living, dining, kitchen and study" in r.json()["detail"]
+    bath = room(client, h, "OTHER", 2400, 1800)                     # (bathrooms are laid out since M32 — an 'other' room still needs a type)
+    r = gen(client, h, bath); assert r.status_code == 422 and "bathroom and utility" in r.json()["detail"]
     assert gen(client, h, bath, room_type="STUDY").json()["kind"] == "STUDY"                                    # lay it out as another type
     liv = room(client, h, "LIVING", 5200, 4000)
     assert "Coffee Table" not in {o["category"] for o in gen(client, h, liv, options={"skip": ["coffee"]}).json()["objects"]}

@@ -34,7 +34,7 @@ try:
 
         admin.goto(f"{WEB}/settings/company"); sw = admin.get_by_role("switch", name="Limit staff to their projects (staff see only projects whose team they're on)"); sw.wait_for()
         if sw.get_attribute("aria-checked") != "true": sw.click()
-        admin.get_by_role("button", name="Save").click(); admin.wait_for_selector("text=Saved")
+        admin.get_by_role("button", name="Save", exact=True).click(); admin.wait_for_selector("text=Saved")
         check("switch turned on in Settings → Company", c.get(f"{API}/settings/company", headers=H).json()["values"]["limit_staff_to_projects"] is True)
 
         admin.goto(f"{WEB}/projects/{A['id']}"); team = admin.get_by_test_id("project-team"); team.wait_for()

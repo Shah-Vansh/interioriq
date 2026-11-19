@@ -62,7 +62,18 @@ SEED_FURNITURE = [
     ("WAR-2D-OAK-001", "2-Door Wardrobe — Oak", "Wardrobe", 1200, 600, 2100, 62000, 3, "scandinavian, minimal"),
     ("SOF-3S-LTH-001", "3-Seater Leather Sofa — Tan", "Sofa", 2100, 900, 850, 145000, 2, "luxury"),
     ("TVU-OAK-001", "TV Unit — Oak", "TV Unit", 1600, 400, 500, 26000, 3, "scandinavian, minimal"),
-    ("DCH-OAK-001", "Dining Chair — Oak", "Dining Chair", 450, 500, 880, 4800, 24, "scandinavian, minimal")]
+    ("DCH-OAK-001", "Dining Chair — Oak", "Dining Chair", 450, 500, 880, 4800, 24, "scandinavian, minimal"),
+    # M32: bathroom + utility
+    ("WC-WH-001", "Wall-hung WC with concealed cistern", "WC", 360, 540, 400, 24000, 6, "modern, minimal"),
+    ("VAN-800-001", "Vanity Unit 800 with basin", "Vanity", 800, 480, 850, 32000, 5, "modern"),
+    ("VAN-600-001", "Vanity Unit 600 with basin", "Vanity", 600, 450, 850, 24000, 5, "minimal"),
+    ("SHW-900-001", "Shower Enclosure 900 × 900", "Shower Enclosure", 900, 900, 2000, 38000, 4, "modern"),
+    ("MIR-800-001", "Mirror Cabinet 800", "Mirror Cabinet", 800, 150, 700, 12500, 6, "modern", 1300),
+    ("LIN-450-001", "Linen Cabinet 450", "Linen Cabinet", 450, 350, 1800, 16000, 4, "minimal"),
+    ("WM-FL-001", "Washing Machine space (front-loading)", "Washing Machine", 600, 600, 850, 0, 10),
+    ("UTB-900-001", "Utility Base Cabinet 900", "Utility Base", 900, 560, 850, 19000, 8),
+    ("UTT-600-001", "Utility Tall Cabinet 600 (brooms)", "Utility Tall", 600, 560, 2100, 27000, 4),
+    ("UTW-900-001", "Utility Wall Cabinet 900", "Utility Wall", 900, 350, 700, 13000, 8, None, 1450)]
 
 def seed():
     if settings.AUTO_MIGRATE:
@@ -115,12 +126,13 @@ async def lifespan(app: FastAPI):
 
 from app.routers.team import router as team_router
 from app.routers.backups import router as backups_router
+from app.routers.exports import router as exports_router
 from app.services import access, jobs
 app = FastAPI(title="InteriorIQ API", version="0.2.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.ALLOWED_ORIGINS, allow_origin_regex=settings.ALLOWED_ORIGIN_REGEX, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 # M22: every route passes the project-access guard (a no-op unless 'Limit staff to their projects' is on)
 for _r in (router, documents_router, estimation_router, crm_router, catalogue_router, operations_router, insights_router, admin_router, portal_router, drawings_router,
-           invoices_router, notifications_router, profit_router, payables_router, takeoff_router, openings_router, team_router, backups_router):
+           invoices_router, notifications_router, profit_router, payables_router, takeoff_router, openings_router, team_router, backups_router, exports_router):
     app.include_router(_r, prefix="/api", dependencies=[Depends(access.guard)])
 
 @app.exception_handler(IntegrityError)

@@ -234,7 +234,7 @@ def system(db: Session = Depends(get_db), user: dict = Depends(require_roles(*AD
             "storage": {"path": store, "writable": writable},
             "ocr": {"pdf_text_layer": has("pypdfium2"), "paddleocr": has("paddleocr"), "rapidocr": has("rapidocr_onnxruntime"),
                     "tesseract": has("pytesseract") and shutil.which("tesseract") is not None},
-            "pdf": has("reportlab"), "dxf": has("ezdxf"), "ollama": _ollama(), "token_minutes": settings.TOKEN_MINUTES,
+            "pdf": has("reportlab"), "pdf_fonts": __import__("app.services.pdf_fonts", fromlist=["status"]).status(), "dxf": has("ezdxf"), "ollama": _ollama(), "token_minutes": settings.TOKEN_MINUTES,
             "schema": sch, "jobs": job,
             "warnings": [w for w in ("SECRET_KEY is the development default — set SECRET_KEY in .env before real use" if settings.SECRET_KEY == "dev-secret-change-me" else "",
                                      "Upload folder is not writable" if not writable else "",

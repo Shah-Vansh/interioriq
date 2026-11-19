@@ -274,7 +274,8 @@ def archive(lid: str, b: ArchiveIn, db: Session = Depends(get_db), user: dict = 
 def fu_out(f: m.LeadFollowUp, users: dict, lead: m.Lead | None = None) -> dict:
     out = {"id": f.id, "lead_id": f.lead_id, "kind": f.kind, "due_at": _iso(f.due_at), "note": f.note, "assigned_to": f.assigned_to, "assigned_name": users.get(f.assigned_to),
            "status": f.status, "outcome": f.outcome, "closed_by": f.closed_by, "closed_at": _iso(f.closed_at),
-           "bucket": fups.bucket(f.due_at) if f.status == "OPEN" else f.status, "reminded_at": _iso(getattr(f, "reminded_at", None))}
+           "bucket": fups.bucket(f.due_at) if f.status == "OPEN" else f.status, "reminded_at": _iso(getattr(f, "reminded_at", None)),
+           "repeat_days": getattr(f, "repeat_days", None)}
     if lead is not None: out.update(lead_name=lead.name, lead_phone=lead.phone, lead_stage=lead.stage, lead_city=lead.city)
     return out
 
@@ -290,6 +291,7 @@ class FollowUpIn(_Base):
     kind: str = "CALL"
     note: str | None = Field(None, max_length=1000)
     assigned_to: str | None = None
+    repeat_days: int | None = Field(None, ge=1, le=90)      # M31: repeat every N days (1–90); None = once
 
     @field_validator("kind")
     @classmethod
@@ -303,10 +305,12 @@ def _add_followup(db: Session, l: m.Lead, b: FollowUpIn, user: dict) -> m.LeadFo
     if l.archived or l.stage in ("LOST", "WON"): raise HTTPException(409, f"This lead is {'archived' if l.archived else l.stage.lower()}; follow-ups are for open leads")
     try: u = fups.check_assignee(db, b.assigned_to or l.assigned_to or (user.get("sub") if user.get("role") in fups.ASSIGNABLE else None))
     except ValueError as e: raise HTTPException(422, str(e))
-    f = m.LeadFollowUp(lead_id=l.id, kind=b.kind, due_at=_future(b.due_at), note=(b.note or "").strip() or None, assigned_to=u.id if u else None, created_by=user.get("sub"))
+    f = m.LeadFollowUp(lead_id=l.id, kind=b.kind, due_at=_future(b.due_at), note=(b.note or "").strip() or None, assigned_to=u.id if u else None, created_by=user.get("sub"),
+                       repeat_days=b.repeat_days)
     db.add(f); db.flush()
     local = f.due_at.astimezone(fups.local_tz())
-    crm.log(db, l, user, "FOLLOW_UP", text=f"{b.kind.title()} scheduled for {local:%d %b %Y %H:%M}" + (f" with {u.full_name}" if u else "") + (f": {f.note}" if f.note else ""))
+    crm.log(db, l, user, "FOLLOW_UP", text=f"{b.kind.title()} scheduled for {local:%d %b %Y %H:%M}" + (f" with {u.full_name}" if u else "")
+            + (f", repeating every {b.repeat_days} day(s)" if b.repeat_days else "") + (f": {f.note}" if f.note else ""))
     l.updated_at = flow.now()
     return f
 
@@ -328,6 +332,14 @@ class DoneIn(_Base):
     outcome: str = Field(min_length=3, max_length=1000)
     next: FollowUpIn | None = None          # book the next step in the same action
     stage: str | None = None                # optionally move the lead on (e.g. CONTACTED → SITE_VISIT)
+    stop_repeat: bool = False               # M31: a repeating follow-up books its next occurrence unless this is set
+
+
+def _next_repeat(f: m.LeadFollowUp) -> datetime:
+    """Next occurrence: due + N days, rolled forward past now (a late 'done' doesn't book something already overdue)."""
+    step = timedelta(days=f.repeat_days); nxt = fups._aware(f.due_at) + step; now = flow.now()
+    while nxt <= now: nxt += step
+    return nxt
 
 
 @router.post("/followups/{fid}/done")
@@ -340,6 +352,13 @@ def done(fid: str, b: DoneIn, db: Session = Depends(get_db), user: dict = Depend
         if l.project_id: raise HTTPException(409, "This lead is converted; its stage stays Won")
         crm.log(db, l, user, "STAGE", frm=l.stage, to=b.stage); l.stage = b.stage
     nxt = _add_followup(db, l, b.next, user) if b.next else None
+    if f.repeat_days and not b.stop_repeat and not l.archived and l.stage not in ("WON", "LOST"):
+        rep = m.LeadFollowUp(lead_id=l.id, kind=f.kind, due_at=_next_repeat(f), note=f.note, assigned_to=f.assigned_to, created_by=user.get("sub"), repeat_days=f.repeat_days)
+        db.add(rep); db.flush()
+        crm.log(db, l, user, "FOLLOW_UP", text=f"Repeating {f.kind.lower()} booked for {rep.due_at.astimezone(fups.local_tz()):%d %b %Y %H:%M} (every {f.repeat_days} day(s))")
+        nxt = nxt or rep
+    elif f.repeat_days and b.stop_repeat:
+        crm.log(db, l, user, "FOLLOW_UP", text=f"{f.kind.title()} stopped repeating")
     db.commit(); users = {u.id: u.full_name for u in db.query(m.User)}
     return {"done": fu_out(f, users, l), "next": fu_out(nxt, users, l) if nxt else None, "lead": _lead(l, db=db)}
 
@@ -360,6 +379,7 @@ class RescheduleIn(_Base):
     due_at: datetime | None = None
     note: str | None = Field(None, max_length=1000)
     assigned_to: str | None = None
+    repeat_days: int | None = Field(None, ge=1, le=90)      # null in the body = stop repeating
 
 
 @router.patch("/followups/{fid}")
@@ -369,6 +389,9 @@ def reschedule(fid: str, b: RescheduleIn, db: Session = Depends(get_db), user: d
         old = _iso(f.due_at); f.due_at = _future(b.due_at); f.reminded_at = None          # remind again for the new time
         crm.log(db, l, user, "FOLLOW_UP", text=f"{f.kind.title()} moved to {f.due_at.astimezone(fups.local_tz()):%d %b %Y %H:%M}")
     if "note" in d: f.note = (b.note or "").strip() or None
+    if "repeat_days" in d and d["repeat_days"] != f.repeat_days:
+        f.repeat_days = d["repeat_days"]
+        crm.log(db, l, user, "FOLLOW_UP", text=f"{f.kind.title()} now repeats every {f.repeat_days} day(s)" if f.repeat_days else f"{f.kind.title()} no longer repeats")
     if "assigned_to" in d:
         try: u = fups.check_assignee(db, b.assigned_to)
         except ValueError as e: raise HTTPException(422, str(e))

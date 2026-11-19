@@ -60,6 +60,7 @@ export const navigation: NavItem[] = [
   ]},
   { label:'Finance', icon:'Landmark', children:[
     { label:'Payables', href:'/finance/payables', icon:'HandCoins' },
+    { label:'Accounting export', href:'/finance/accounting-export', icon:'FileSpreadsheet' },
   ]},
   { label:'Client Portal', href:'/client-portal', icon:'Globe' },
   { label:'Reports', icon:'BarChart3', children:[
