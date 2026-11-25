@@ -8,13 +8,14 @@ import { Download, FileText, Lightbulb, Loader2, Move, Palette, Sparkles, Sun, W
 import { api, downloadFile, Project } from '@/lib/api'
 import { Alert, btn, Card, Drawer, Empty, Field, hasRole, input, Ok, PageHeader, Pill, Switch, useAction, useLoad, useRole } from '@/components/ui/kit'
 import { FurnitureModel } from '@/components/design/three/models'
-import { Lighting, RealisticRoom, eyePoint, facing, isNight } from '@/components/design/three/scene'
+import { Lighting, RealisticFx, RealisticRoom, eyePoint, facing, isNight } from '@/components/design/three/scene'
 import { Finishes } from '@/components/design/three/finishes'
+import { openingSpan, type Shell } from '@/lib/room-shell'
 
 interface Obj { id: string; name: string; category: string; x: number; y: number; length: number; width: number; height: number; z?: number; rotation?: number; colour?: string | null }
 interface Op { id: string; kind: string; wall: string; offset: number; width: number; height: number; sill: number }
 interface PlanRoom { id: string; name: string; room_type: string; x: number | null; y: number | null; level: number; L: number | null; W: number | null; H: number | null
-  placed: boolean; openings: Op[]; objects: Obj[]; finishes: (Finishes & { style_label?: string; idea?: string; ceiling?: { type: string; label?: string }; floor?: { kind: string; tone: string; label?: string }; accent?: Finishes['accent'] }) | null; design_version: number | null }
+  placed: boolean; openings: Op[]; objects: Obj[]; finishes: (Finishes & { style_label?: string; idea?: string; ceiling?: { type: string; label?: string }; floor?: { kind: string; tone: string; label?: string }; accent?: Finishes['accent'] }) | null; design_version: number | null; shell?: Shell | null }
 interface Plan { rooms: PlanRoom[]; warnings: string[]; bounds: { x0: number; y0: number; x1: number; y1: number } | null; unmeasured: string[]; wall_mm: number }
 interface Styles { styles: Record<string, { label: string; idea: string; palette: Record<string, string>; floor: string }>; accent_types: Record<string, string>; ceilings: Record<string, string>; floors: Record<string, string> }
 const WET = ['BATHROOM', 'UTILITY', 'KITCHEN', 'WASH_AREA']
@@ -163,13 +164,17 @@ function PlanTab({ pid, plan, setPlan, can }: { pid: string; plan: Plan; setPlan
         <rect x={0} y={0} width={vw} height={vh} fill="#fafaf9" />
         {placed.map(r => { const p = pos[r.id], sx = p.x - bx0, sy = by1 - (p.y + r.W!)
           return <g key={r.id} data-plan-room={r.name} className={can ? 'cursor-move' : ''} onPointerDown={e => { if (!can) return; (e.target as Element).setPointerCapture?.(e.pointerId); const m = toMm(e); drag.current = { id: r.id, sx: m.x, sy: m.y, ox: p.x, oy: p.y } }}>
-            <rect x={sx - 115} y={sy - 115} width={r.L! + 230} height={r.W! + 230} fill="#57534e" />
-            <rect x={sx} y={sy} width={r.L!} height={r.W!} fill={r.finishes?.floor?.tone ?? '#f5f1ea'} fillOpacity={0.55} />
+            {r.shell && r.shell.outline.length > 4 ? (() => { const pts = r.shell.outline.map(([x, y]) => `${sx + x},${sy + r.W! - y}`).join(' ')   // L-shaped / angled room
+              return <><polygon points={pts} fill="#57534e" stroke="#57534e" strokeWidth={230} strokeLinejoin="miter" /><polygon points={pts} fill="#fafaf9" />
+                <polygon points={pts} fill={r.finishes?.floor?.tone ?? '#f5f1ea'} fillOpacity={0.55} /></> })()
+              : <><rect x={sx - 115} y={sy - 115} width={r.L! + 230} height={r.W! + 230} fill="#57534e" />
+                <rect x={sx} y={sy} width={r.L!} height={r.W!} fill={r.finishes?.floor?.tone ?? '#f5f1ea'} fillOpacity={0.55} /></>}
+            {r.shell?.structures.filter(st => st.kind === 'COLUMN' || st.kind === 'PILLAR').map(st => <rect key={st.id} x={sx + st.x} y={sy + r.W! - st.y - st.width} width={st.length} height={st.width} fill="#57534e" />)}
             {r.objects.map(o => <rect key={o.id} transform={o.rotation ? `rotate(${-o.rotation} ${sx + o.x + o.length / 2} ${sy + r.W! - o.y - o.width / 2})` : undefined}
               x={sx + o.x} y={sy + r.W! - o.y - o.width} width={o.length} height={o.width} fill="#fde68a" stroke="#92400e" strokeWidth={12} fillOpacity={(o.z ?? 0) >= 1200 ? 0.25 : 0.8} />)}
-            {r.openings.map(o => { const wall = o.wall, a0 = o.offset, w = o.width
-              const [x, y, ww, hh] = wall === 'S' ? [sx + a0, sy + r.W!, w, 115] : wall === 'N' ? [sx + a0, sy - 115, w, 115] : wall === 'W' ? [sx - 115, sy + r.W! - a0 - w, 115, w] : [sx + r.L!, sy + r.W! - a0 - w, 115, w]
-              return <rect key={o.id} x={x} y={y} width={ww} height={hh} fill={o.kind === 'DOOR' ? '#fafaf9' : '#7dd3fc'} /> })}
+            {r.openings.map(o => { const [p0, p1, n] = openingSpan(o, r.L!, r.W!)                 // a gap in the wall band, on any wall
+              const pts = [p0, p1, [p1[0] - n[0] * 115, p1[1] - n[1] * 115], [p0[0] - n[0] * 115, p0[1] - n[1] * 115]].map(([x, y]) => `${sx + x},${sy + r.W! - y}`).join(' ')
+              return <polygon key={o.id} points={pts} fill={o.kind === 'DOOR' ? '#fafaf9' : '#7dd3fc'} /> })}
             <text x={sx + r.L! / 2} y={sy + r.W! / 2} fontSize={Math.min(260, r.L! / 7)} textAnchor="middle" fill="#292524" fontWeight={600}>{r.name}</text>
             <text x={sx + r.L! / 2} y={sy + r.W! / 2 + Math.min(240, r.L! / 8)} fontSize={Math.min(180, r.L! / 10)} textAnchor="middle" fill="#57534e">{r.L} × {r.W}</text>
           </g> })}
@@ -192,7 +197,7 @@ function Home3D({ plan }: { plan: Plan }) {
   const cam = useMemo(() => {
     if (!b) return null
     const r = rooms.find(x => x.id === look)
-    if (r) { const e = eyePoint(r.L!, r.W!, r.openings, r.objects); const ox = (r.x! - b.x0) / 1000, oz = -(r.y! - b.y0) / 1000
+    if (r) { const e = eyePoint(r.L!, r.W!, r.openings, r.objects, r.shell?.outline); const ox = (r.x! - b.x0) / 1000, oz = -(r.y! - b.y0) / 1000
       return { pos: [e.pos[0] + ox, e.pos[1], e.pos[2] + oz] as [number, number, number], target: [e.target[0] + ox, e.target[1], e.target[2] + oz] as [number, number, number], fov: 68 } }
     const L = (b.x1 - b.x0) / 1000, W = (b.y1 - b.y0) / 1000, span = Math.max(L, W)
     return { pos: [L / 2 + span * 0.5, span * 1.05, -W / 2 + span * 0.85] as [number, number, number], target: [L / 2, 0, -W / 2] as [number, number, number], fov: 45 }
@@ -209,13 +214,14 @@ function Home3D({ plan }: { plan: Plan }) {
       <span className="text-stone-400">Drag to orbit, scroll to zoom. Edit furniture in the 3D Editor, designs in Design concept.</span>
     </div>
     <div className="h-[68vh] rounded-lg overflow-hidden border border-stone-200 bg-stone-100" data-testid="home-3d">
-      <Canvas key={look} shadows="soft" dpr={[1, 2]} gl={{ preserveDrawingBuffer: true, antialias: true }}>
+      <Canvas key={look} frameloop="demand" shadows="soft" dpr={[1, 2]} gl={{ preserveDrawingBuffer: true, antialias: true }}>
         <PerspectiveCamera makeDefault position={cam.pos} fov={cam.fov} near={0.05} far={400} />
         <OrbitControls makeDefault target={cam.target} enableDamping maxPolarAngle={look ? Math.PI * 0.62 : Math.PI / 2 - 0.02} />
         <Lighting L={L} W={W} H={3} hour={hour} />
+        <RealisticFx />
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[L / 2, -0.012, -W / 2]} receiveShadow><planeGeometry args={[L + 30, W + 30]} /><meshStandardMaterial color="#d9d4cb" /></mesh>
         {rooms.map(r => <group key={r.id} position={[(r.x! - b.x0) / 1000, 0, -(r.y! - b.y0) / 1000]}>
-          <RealisticRoom L={r.L! / 1000} W={r.W! / 1000} H={(r.H ?? 2750) / 1000} ops={r.openings} hour={hour} lightsOn={lights} wet={WET.includes(r.room_type)} finishes={r.finishes} ground={false} />
+          <RealisticRoom L={r.L! / 1000} W={r.W! / 1000} H={(r.H ?? 2750) / 1000} ops={r.openings} hour={hour} lightsOn={lights} wet={WET.includes(r.room_type)} finishes={r.finishes} ground={false} shell={r.shell} />
           {r.objects.map(o => <HomeFurniture key={o.id} o={o} room={{ L: r.L!, W: r.W! }} />)}
         </group>)}
       </Canvas>

@@ -9,10 +9,11 @@ import { M, finish } from './materials'
 type V3 = [number, number, number]
 interface P { l: number; d: number; h: number; colour?: string | null; name?: string }
 
-function B({ p, s, m, r }: { p: V3; s: V3; m: THREE.Material; r?: number }) {
-  if (r) return <RoundedBox args={s} radius={Math.min(r, s[0] / 2.2, s[1] / 2.2, s[2] / 2.2)} smoothness={3} position={p} castShadow receiveShadow material={m} />
-  return <mesh position={p} castShadow receiveShadow material={m}><boxGeometry args={s} /></mesh>
+function B({ p, s, m, r, rot }: { p: V3; s: V3; m: THREE.Material; r?: number; rot?: V3 }) {
+  if (r) return <RoundedBox args={s} radius={Math.min(r, s[0] / 2.2, s[1] / 2.2, s[2] / 2.2)} smoothness={3} position={p} rotation={rot} castShadow receiveShadow material={m} />
+  return <mesh position={p} rotation={rot} castShadow receiveShadow material={m}><boxGeometry args={s} /></mesh>
 }
+const EDGE = 0.003      // every panel gets a small rounded edge — real boards are edge-banded, and the edge catches the light
 function C({ p, r, h, m, seg = 20 }: { p: V3; r: number; h: number; m: THREE.Material; seg?: number }) {
   return <mesh position={p} castShadow receiveShadow material={m}><cylinderGeometry args={[r, r, h, seg]} /></mesh>
 }
@@ -20,53 +21,72 @@ const legs4 = (l: number, d: number, h: number, inset: number, r: number, m: THR
   [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz], i) => <C key={i} p={[sx * (l / 2 - inset), h / 2, sz * (d / 2 - inset)]} r={r} h={h} m={m} />)
 
 /** Carcass with shutters (wardrobe, kitchen units, TV unit, vanity …): body, door split every ~450 mm, vertical bar handles, optional plinth. */
-function Cabinet({ l, d, h, body, front, plinth = 0, handle = 'bar', doors, drawers = 0, top }: { l: number; d: number; h: number; body: THREE.Material; front: THREE.Material
-  plinth?: number; handle?: 'bar' | 'bottom' | 'none'; doors?: number; drawers?: number; top?: THREE.Material }) {
+function Cabinet({ l, d, h, body, front, plinth = 0, handle = 'bar', doors, drawers = 0, top, loft = 0 }: { l: number; d: number; h: number; body: THREE.Material; front: THREE.Material
+  plinth?: number; handle?: 'bar' | 'bottom' | 'none' | 'profile'; doors?: number; drawers?: number; top?: THREE.Material; loft?: number }) {
   const ch = h - plinth, n = drawers ? 0 : doors ?? Math.max(1, Math.round(l / 0.45)), gap = 0.003
-  const parts = [<B key="body" p={[0, plinth + ch / 2, -0.009]} s={[l, ch, d - 0.018]} m={body} />]
-  if (plinth) parts.push(<B key="plinth" p={[0, plinth / 2, -0.04]} s={[l - 0.02, plinth, d - 0.08]} m={M.black()} />)
+  const parts = [<B key="body" p={[0, plinth + ch / 2, -0.009]} s={[l, ch, d - 0.018]} m={body} r={EDGE} />]
+  if (plinth) parts.push(<B key="plinth" p={[0, plinth / 2, -0.05]} s={[l - 0.02, plinth, d - 0.1]} m={M.black()} />)   // recessed kick plate = a real shadow line
   if (drawers) {
     const dh = ch / drawers
     for (let k = 0; k < drawers; k++) {
-      parts.push(<B key={`dr${k}`} p={[0, plinth + dh * k + dh / 2, d / 2 - 0.009]} s={[l - gap * 2, dh - gap * 2, 0.018]} m={front} />)
-      parts.push(<B key={`dh${k}`} p={[0, plinth + dh * (k + 1) - 0.05, d / 2 + 0.012]} s={[Math.min(0.3, l * 0.4), 0.012, 0.02]} m={M.metal()} />)
+      parts.push(<B key={`dr${k}`} p={[0, plinth + dh * k + dh / 2, d / 2 - 0.009]} s={[l - gap * 2, dh - gap * 2, 0.018]} m={front} r={EDGE} />)
+      parts.push(<B key={`dh${k}`} p={[0, plinth + dh * (k + 1) - 0.05, d / 2 + 0.012]} s={[Math.min(0.3, l * 0.4), 0.012, 0.02]} m={M.metal()} r={0.004} />)
     }
-  } else for (let k = 0; k < n; k++) {
-    const w = l / n, x = -l / 2 + w * k + w / 2
-    parts.push(<B key={`d${k}`} p={[x, plinth + ch / 2, d / 2 - 0.009]} s={[w - gap * 2, ch - gap * 2, 0.018]} m={front} />)
-    if (handle !== 'none') {
-      const hx = x + (k % 2 === 0 ? w / 2 - 0.04 : -w / 2 + 0.04) * (n === 1 ? 1 : 1)
-      const hh = handle === 'bottom' ? 0.012 : Math.min(0.25, ch * 0.25)
-      const hy = handle === 'bottom' ? plinth + 0.04 : plinth + (ch > 1.2 ? ch * 0.5 : ch - 0.12)
-      parts.push(<B key={`h${k}`} p={[handle === 'bottom' ? x : hx, hy, d / 2 + 0.012]} s={handle === 'bottom' ? [Math.min(0.3, w * 0.6), hh, 0.02] : [0.012, hh, 0.02]} m={M.metal()} />)
-    }
+  } else {
+    const rows: [number, number][] = loft > 0.2 && ch - loft > 0.8 ? [[plinth, ch - loft - gap], [plinth + ch - loft + gap, loft - gap]] : [[plinth, ch]]   // loft shutters above
+    rows.forEach(([y0, rh], ri) => { for (let k = 0; k < n; k++) {
+      const w = l / n, x = -l / 2 + w * k + w / 2
+      parts.push(<B key={`d${ri}-${k}`} p={[x, y0 + rh / 2, d / 2 - 0.009]} s={[w - gap * 2, rh - gap * 2, 0.018]} m={front} r={EDGE} />)
+      if (handle === 'none' || (ri === 1 && handle !== 'profile')) continue
+      const edgeX = x + (k % 2 === 0 ? w / 2 - 0.02 : -w / 2 + 0.02)
+      if (handle === 'profile') {                                         // slim aluminium G-profile along the shutter edge
+        const ph = ri === 1 ? Math.min(0.2, rh * 0.6) : Math.min(1.2, rh * 0.75)
+        parts.push(<B key={`h${ri}-${k}`} p={[edgeX, ri === 1 ? y0 + 0.02 + ph / 2 : y0 + rh / 2, d / 2 + 0.006]} s={[0.014, ph, 0.012]} m={M.chrome()} r={0.004} />)
+        continue
+      }
+      const hh = handle === 'bottom' ? 0.012 : Math.min(0.25, rh * 0.25)
+      const hy = handle === 'bottom' ? y0 + 0.04 : y0 + (rh > 1.2 ? rh * 0.5 : rh - 0.12)
+      parts.push(<B key={`h${ri}-${k}`} p={[handle === 'bottom' ? x : edgeX - (k % 2 === 0 ? 0.02 : -0.02), hy, d / 2 + 0.012]} s={handle === 'bottom' ? [Math.min(0.3, w * 0.6), hh, 0.02] : [0.012, hh, 0.02]} m={M.metal()} r={0.004} />)
+    } })
   }
-  if (top) parts.push(<B key="top" p={[0, h + 0.02, 0.01]} s={[l, 0.04, d + 0.02]} m={top} />)
+  if (top) parts.push(<B key="top" p={[0, h + 0.02, 0.01]} s={[l, 0.04, d + 0.02]} m={top} r={0.004} />)
   return <>{parts}</>
 }
 
 // ── models ───────────────────────────────────────────────────────────────────
 function Bed({ l, d, h, colour }: P) {
-  const frame = finish('wood', colour, '#6b4226'), base = 0.32, mat = 0.22
+  // upholstered bed: base on a recessed plinth, mattress, duvet draping over the sides, throw at the foot, pillows + cushions,
+  // channel-tufted headboard — the way a hotel / studio bed is dressed in a render
+  const head = M.fabric(colour ?? '#8a7f74'), base = 0.3, mat = 0.22, top = base + mat, H = Math.max(h, 0.95)
+  const ch = Math.max(5, Math.round(l / 0.16)), cw = (l + 0.04) / ch
   return <>
-    <B p={[0, base / 2, 0.02]} s={[l, base, d - 0.04]} m={frame} r={0.02} />
-    <B p={[0, base + mat / 2, 0.04]} s={[l - 0.06, mat, d - 0.12]} m={M.linen()} r={0.06} />
-    <B p={[0, base + mat + 0.03, 0.25]} s={[l - 0.04, 0.05, d * 0.62]} m={M.fabric('#c9b79c')} r={0.025} />
-    {[-1, 1].map(s => <B key={s} p={[s * l / 4.2, base + mat + 0.07, -d / 2 + 0.3]} s={[l / 2.4, 0.13, 0.42]} m={M.linen()} r={0.06} />)}
-    <B p={[0, Math.max(h, 0.9) / 2, -d / 2 + 0.04]} s={[l + 0.04, Math.max(h, 0.9), 0.08]} m={M.fabric(colour ?? '#7c6f64')} r={0.03} />
+    <B p={[0, 0.04, 0.02]} s={[l - 0.12, 0.08, d - 0.16]} m={M.black()} />
+    <B p={[0, 0.08 + (base - 0.08) / 2, 0.02]} s={[l, base - 0.08, d - 0.04]} m={head} r={0.03} />
+    <B p={[0, base + mat / 2, 0.04]} s={[l - 0.06, mat, d - 0.12]} m={M.linen()} r={0.07} />
+    <B p={[0, top + 0.03, 0.2]} s={[l - 0.02, 0.07, d * 0.66]} m={M.linen()} r={0.035} />
+    {[-1, 1].map(sx => <B key={`dr${sx}`} p={[sx * (l / 2 - 0.005), top - 0.1, 0.2]} s={[0.025, 0.25, d * 0.66]} m={M.linen()} r={0.012} />)}
+    <B p={[0, top + 0.075, d / 2 - 0.32]} s={[l + 0.03, 0.04, 0.42]} m={M.fabric('#b49a7a')} r={0.02} />
+    <B p={[0, top - 0.06, d / 2 - 0.1]} s={[l + 0.03, 0.2, 0.02]} m={M.fabric('#b49a7a')} r={0.01} />
+    {[-1, 1].map(sx => <B key={`pl${sx}`} p={[sx * l / 4.3, top + 0.1, -d / 2 + 0.3]} s={[l / 2.5, 0.16, 0.44]} m={M.linen()} r={0.075} rot={[-0.25, 0, 0]} />)}
+    {[-1, 1].map(sx => <B key={`cu${sx}`} p={[sx * l / 5.5, top + 0.16, -d / 2 + 0.52]} s={[0.42, 0.38, 0.12]} m={M.fabric(colour ?? '#6f7f73')} r={0.05} rot={[-0.35, 0, 0]} />)}
+    {Array.from({ length: ch }, (_, k) => <B key={`hb${k}`} p={[-l / 2 - 0.02 + cw * k + cw / 2, H / 2 + 0.02, -d / 2 + 0.05]} s={[cw - 0.006, H - 0.04, 0.1]} m={head} r={0.035} />)}
   </>
 }
-function Wardrobe({ l, d, h, colour }: P) { return <Cabinet l={l} d={d} h={h} body={M.laminate('#efe9df')} front={finish('wood', colour, '#7a4a24')} /> }
+function Wardrobe({ l, d, h, colour }: P) {
+  return <Cabinet l={l} d={d} h={h} body={M.laminate('#efe9df')} front={finish('wood', colour, '#7a4a24')} handle="profile" plinth={0.05} loft={h > 2.25 ? 0.55 : 0} />
+}
 function Sofa({ l, d, h, colour }: P) {
-  const f = M.fabric(colour ?? '#7d8794'), seatH = 0.42, arm = 0.18, n = Math.max(1, Math.round((l - 2 * arm) / 0.7))
-  const cw = (l - 2 * arm) / n
+  // frame on slim legs, rounded arms, seat cushions with seams, slightly reclined back cushions, two scatter cushions
+  const f = M.fabric(colour ?? '#7d8794'), seatH = 0.44, arm = Math.min(0.2, l * 0.1), n = Math.max(1, Math.round((l - 2 * arm) / 0.7))
+  const cw = (l - 2 * arm) / n, H = Math.max(h, 0.78)
   return <>
-    <B p={[0, 0.2, 0]} s={[l, 0.22, d]} m={f} r={0.04} />
-    {[-1, 1].map(s => <B key={s} p={[s * (l / 2 - arm / 2), 0.31, 0]} s={[arm, 0.62, d]} m={f} r={0.06} />)}
-    <B p={[0, Math.max(h, 0.75) / 2 + 0.05, -d / 2 + 0.11]} s={[l - 0.02, Math.max(h, 0.75) - 0.1, 0.22]} m={f} r={0.07} />
-    {Array.from({ length: n }, (_, k) => <B key={k} p={[-l / 2 + arm + cw * k + cw / 2, seatH - 0.05, 0.07]} s={[cw - 0.02, 0.16, d - 0.3]} m={f} r={0.06} />)}
-    {Array.from({ length: n }, (_, k) => <B key={`b${k}`} p={[-l / 2 + arm + cw * k + cw / 2, seatH + 0.22, -d / 2 + 0.3]} s={[cw - 0.06, 0.38, 0.16]} m={f} r={0.07} />)}
-    {legs4(l, d, 0.08, 0.06, 0.018, M.black())}
+    <B p={[0, 0.25, 0]} s={[l, 0.2, d]} m={f} r={0.05} />
+    {[-1, 1].map(s => <B key={s} p={[s * (l / 2 - arm / 2), 0.37, 0.01]} s={[arm, 0.6, d - 0.02]} m={f} r={0.08} />)}
+    <B p={[0, (H + 0.2) / 2, -d / 2 + 0.1]} s={[l - 0.01, H - 0.2, 0.2]} m={f} r={0.08} />
+    {Array.from({ length: n }, (_, k) => <B key={k} p={[-l / 2 + arm + cw * k + cw / 2, seatH - 0.03, 0.06]} s={[cw - 0.012, 0.17, d - 0.26]} m={f} r={0.07} />)}
+    {Array.from({ length: n }, (_, k) => <B key={`b${k}`} p={[-l / 2 + arm + cw * k + cw / 2, seatH + 0.24, -d / 2 + 0.28]} s={[cw - 0.03, 0.42, 0.18]} m={f} r={0.08} rot={[-0.14, 0, 0]} />)}
+    {n >= 2 && [-1, 1].map(s => <B key={`c${s}`} p={[s * (l / 2 - arm - 0.22), seatH + 0.2, -d / 2 + 0.42]} s={[0.4, 0.38, 0.12]} m={M.fabric('#c9b79c')} r={0.05} rot={[-0.3, s * 0.15, 0]} />)}
+    {[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz], i) => <mesh key={`l${i}`} position={[sx * (l / 2 - 0.08), 0.075, sz * (d / 2 - 0.08)]} castShadow material={M.wood('#3b2a1e')}><cylinderGeometry args={[0.018, 0.012, 0.15, 14]} /></mesh>)}
   </>
 }
 function Armchair({ l, d, h, colour }: P) { return <Sofa l={l} d={d} h={h} colour={colour ?? '#2f6f73'} /> }
@@ -131,12 +151,12 @@ function Shelves({ l, d, h, colour }: P) {
 }
 function Kitchen({ l, d, h, colour, kind }: P & { kind: 'base' | 'tall' | 'wall' | 'sink' | 'hob' | 'filler' }) {
   const front = M.laminate(colour ?? '#e8e2d6'), body = M.laminate('#f2efe9')
-  if (kind === 'filler') return <B p={[0, h / 2, 0]} s={[l, h, d]} m={front} />
+  if (kind === 'filler') return <B p={[0, h / 2, 0]} s={[l, h, d]} m={front} r={EDGE} />
   if (kind === 'wall') return <Cabinet l={l} d={d} h={h} body={body} front={front} handle="bottom" />
-  if (kind === 'tall') return <Cabinet l={l} d={d} h={h} body={body} front={front} doors={1} />
+  if (kind === 'tall') return <Cabinet l={l} d={d} h={h} body={body} front={front} doors={1} handle="profile" plinth={0.1} />
   const counter = M.quartz(), plinth = 0.1
   return <>
-    <Cabinet l={l} d={d} h={h - 0.04} body={body} front={front} plinth={plinth} drawers={kind === 'hob' ? 3 : 0} top={counter} />
+    <Cabinet l={l} d={d} h={h - 0.04} body={body} front={front} plinth={plinth} drawers={kind === 'hob' ? 3 : 0} top={counter} handle="profile" />
     {kind === 'sink' && <>
       <B p={[0, h - 0.06, 0.02]} s={[Math.min(0.6, l - 0.15), 0.06, d * 0.7]} m={M.chrome()} />
       <B p={[0, h - 0.02, 0.02]} s={[Math.min(0.55, l - 0.2), 0.012, d * 0.62]} m={M.screen()} />

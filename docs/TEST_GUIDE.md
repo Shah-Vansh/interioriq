@@ -74,6 +74,12 @@ Follow the parts in order: each part uses data created in the one before, so by 
 - [ ] Mark measurements as **verified**
 - [ ] **Doors & windows** card: add a door on the south wall and a window on the east wall of the bedroom → *mini plan shows them*
 - [ ] Try a window wider than the wall → *refused with a reason*
+- [ ] **Room shape, ceiling, beams & columns** card (an odd room): Shape → *L-shaped*, tick North-east, 1500 × 1500 → Save shape → *plan shows the L, 6 walls, smaller floor area*
+- [ ] Ceiling → *Sloped*, lowest 2700, highest 3300, high side N → Save → *"ceiling 2700–3300 mm"*
+- [ ] Add a **Beam** (x 0, y 2000, 4800 × 230, 450 deep) and a **Column** (x 0, y 0, 350 × 350) → *drawn on the plan*
+- [ ] Doors & windows → Wall → *"Wall 4 … faces E"* (the inside wall of the L) → add a door there → *drawn on that wall*
+- [ ] AI Designer → generate → *nothing in the cut-out corner, nothing on the column, nothing tall under the beam*; Elevations → *sloped top line + beam*; 3D editor → *L-shaped walls, sloped ceiling, beam*
+- [ ] Try a cut that leaves almost no room, or switching back to a rectangle while a door is on the inside wall → *refused with a reason*
 - [ ] **Documents**: upload a PDF/photo of a plan with dimensions → *"Reading…" then a table of found dimensions* → Apply the ones you trust → *OCR values never overwrite verified ones (reason shown)*
 
 ---

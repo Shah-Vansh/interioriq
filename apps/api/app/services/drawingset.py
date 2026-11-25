@@ -116,28 +116,66 @@ class Sheet:
 
 
 # ── room plan ────────────────────────────────────────────────────────────────
-def _plan(S: Sheet, L, W, objs, ops, x0, y0, bw, bh, names=True, markers=True, f=None, dims=True):
+def _poly(c, pts, fill=None, stroke=True):
+    p = c.beginPath(); p.moveTo(*pts[0])
+    for q in pts[1:]: p.lineTo(*q)
+    p.close(); c.drawPath(p, fill=1 if fill is not None else 0, stroke=1 if stroke else 0)
+
+
+def _plan(S: Sheet, L, W, objs, ops, x0, y0, bw, bh, names=True, markers=True, f=None, dims=True, shell=None):
+    from shapely.geometry import Polygon
+    from app.services import geometry as geo, shape as shp
     c = S.c; s = min(bw / (L + 600), bh / (W + 600)); ox, oy = x0 + (bw - L * s) / 2, y0 + (bh - W * s) / 2; t = 230 * s / 2
+    P = lambda x, y: (ox + x * s, oy + y * s)
+    outline = [tuple(q) for q in (shell or {}).get("outline") or [(0, 0), (L, 0), (L, W), (0, W)]]
+    room = Polygon(outline); band = room.buffer(115, join_style=2).difference(room)            # 230 mm walls drawn outside the clear room
     c.setFillColor(colors.HexColor("#9c9c9c")); c.setStrokeColor(INK); c.setLineWidth(0.8)
-    for rx, ry, rw, rh in ((ox - t, oy - t, L * s + 2 * t, t), (ox - t, oy + W * s, L * s + 2 * t, t), (ox - t, oy, t, W * s), (ox + L * s, oy, t, W * s)):
-        c.rect(rx, ry, rw, rh, stroke=1, fill=1)
+    for g in getattr(band, "geoms", [band]):
+        _poly(c, [P(*q) for q in list(g.exterior.coords)[:-1]], fill=True)
+        for hole in g.interiors: c.setFillColor(colors.white); _poly(c, [P(*q) for q in list(hole.coords)[:-1]], fill=True); c.setFillColor(colors.HexColor("#9c9c9c"))
+    t = 115 * s
+    R = geo.Room(L, W)
     for o in ops:
-        a, w = o["offset"] * s, o["width"] * s
-        seg = {"S": (ox + a, oy - t, w, t), "N": (ox + a, oy + W * s, w, t), "W": (ox - t, oy + a, t, w), "E": (ox + L * s, oy + a, t, w)}[o["wall"]]
-        c.setFillColor(colors.white); c.setStrokeColor(colors.white); c.rect(*seg, stroke=1, fill=1)
+        (ax, ay, bx, by), (nx, ny) = geo.opening_span(R, o); w = o["width"] * s
+        gap = [P(ax, ay), P(bx, by), P(bx - nx * 115, by - ny * 115), P(ax - nx * 115, ay - ny * 115)]
+        c.setFillColor(colors.white); c.setStrokeColor(colors.white); _poly(c, gap, fill=True)
         c.setStrokeColor(INK); c.setLineWidth(0.5)
         if o["kind"] == "WINDOW":
-            sx, sy, sw, sh = seg; c.setStrokeColor(BLUE)
-            if o["wall"] in "NS": c.line(sx, sy + sh * 0.3, sx + sw, sy + sh * 0.3); c.line(sx, sy + sh * 0.7, sx + sw, sy + sh * 0.7)
-            else: c.line(sx + sw * 0.3, sy, sx + sw * 0.3, sy + sh); c.line(sx + sw * 0.7, sy, sx + sw * 0.7, sy + sh)
+            c.setStrokeColor(BLUE)
+            for k in (0.3, 0.7): c.line(*P(ax - nx * 115 * k, ay - ny * 115 * k), *P(bx - nx * 115 * k, by - ny * 115 * k))
+        elif o.get("swing") == "SLIDING":
+            c.setLineWidth(0.9); c.line(*P(ax - nx * 40, ay - ny * 40), *P(bx - nx * 40, by - ny * 40))
         else:
-            hinge = {"S": (ox + a, oy), "N": (ox + a, oy + W * s), "W": (ox, oy + a), "E": (ox + L * s, oy + a)}[o["wall"]]
-            inward = (o.get("swing") or "").startswith("INWARD") or not o.get("swing")
-            start = {"S": 0, "N": 270, "W": 0, "E": 90}[o["wall"]] if inward else {"S": 270, "N": 0, "W": 90, "E": 0}[o["wall"]]
-            c.setDash(1.5, 1.5); c.arc(hinge[0] - w, hinge[1] - w, hinge[0] + w, hinge[1] + w, start, 90)
-            lead = math.radians(start + (90 if o["wall"] in "SN" and inward else 0)) if False else math.radians(start + 90 if o["wall"] in ("S", "E") else start)
-            c.setDash(); c.setLineWidth(0.9); c.line(hinge[0], hinge[1], hinge[0] + w * math.cos(lead), hinge[1] + w * math.sin(lead))
-            c.setDash()
+            right = o.get("swing") == "INWARD_RIGHT"
+            hx, hy, ex, ey = (bx, by, ax, ay) if right else (ax, ay, bx, by)
+            dn = -1 if o.get("swing") == "OUTWARD" else 1
+            lx, ly = nx * dn, ny * dn                                                          # the leaf, open at 90°
+            a_other = math.degrees(math.atan2(ey - hy, ex - hx)); a_leaf = math.degrees(math.atan2(ly, lx))
+            st = a_other if (a_leaf - a_other) % 360 == 90 or abs((a_leaf - a_other) % 360 - 90) < 1 else a_leaf
+            hxp, hyp = P(hx, hy)
+            c.setDash(1.5, 1.5); c.arc(hxp - w, hyp - w, hxp + w, hyp + w, st, 90)
+            c.setDash(); c.setLineWidth(0.9); c.line(hxp, hyp, hxp + lx * w, hyp + ly * w)
+    for st in (shell or {}).get("structures") or []:                                       # columns hatched, beams dashed
+        x, y, l, w2 = st["x"], st["y"], st["length"], st["width"]; corners = [P(x, y), P(x + l, y), P(x + l, y + w2), P(x, y + w2)]
+        if st["kind"] in ("COLUMN", "PILLAR"):
+            c.setFillColor(colors.HexColor("#5b5b5b")); c.setStrokeColor(INK); c.setLineWidth(0.7); _poly(c, corners, fill=True)
+            c.setStrokeColor(colors.white); c.setLineWidth(0.4); c.line(*corners[0], *corners[2]); c.line(*corners[1], *corners[3])
+            S.text(st["label"].upper(), corners[3][0], corners[3][1] + 1 * mm, 5, col=GREY)
+        else:
+            from app.services.cad import beam_underside
+            c.setStrokeColor(MAG); c.setLineWidth(0.6); c.setDash(3, 2); _poly(c, corners); c.setDash()
+            vert = w2 > l
+            S.text(f"{st['label'].upper()} {S.d(min(l, w2))} x {S.d(st.get('depth') or 0)} (U/S {S.d(beam_underside(shell, st))})",
+                   ox + (x + l * (0.5 if vert else 0.78)) * s + (w2 * s + 1.5 * mm if vert else 0), oy + (y + w2 * (0.78 if vert else 1)) * s + (0 if vert else 1.2 * mm),
+                   5, col=MAG, centre=True, angle=90 if vert else 0)
+    if len(outline) > 4 and dims:                                                          # each wall's length, outside the wall
+        for (ax, ay), (bx, by) in zip(outline, outline[1:] + outline[:1]):
+            ln = math.hypot(bx - ax, by - ay)
+            if ln < 200 or (abs(ln - L) < 2 and abs(ay - by) < 1) or (abs(ln - W) < 2 and abs(ax - bx) < 1): continue   # full sides: overall dims
+            ux, uy = (bx - ax) / ln, (by - ay) / ln; mx, my = (ax + bx) / 2 + uy * 520, (ay + by) / 2 - ux * 520
+            ang = math.degrees(math.atan2(uy, ux))
+            if ang > 90 or ang <= -90: ang += 180
+            S.text(S.d(ln), *P(mx, my), 5.5, col=GREY, centre=True, angle=ang)
     a = (f or {}).get("accent")
     if a:
         p0, p1 = a["from"] * s, a["to"] * s; c.setStrokeColor(BLUE); c.setLineWidth(1.6)
@@ -163,17 +201,36 @@ def _plan(S: Sheet, L, W, objs, ops, x0, y0, bw, bh, names=True, markers=True, f
 
 
 # ── wall elevation with the feature wall ─────────────────────────────────────
-def _elevation(S: Sheet, wall, L, W, H, objs, ops, f, x0, y0, bw, bh, title):
-    c = S.c; wl = L if wall in "NS" else W; s = min(bw / wl, bh / H); ox, oy = x0, y0
-    c.setStrokeColor(INK); c.setLineWidth(1); c.rect(ox, oy, wl * s, H * s)
+def _elevation(S: Sheet, wall, L, W, H, objs, ops, f, x0, y0, bw, bh, title, e=None):
+    """e = mep.elevations() entry for this wall (M41: ceiling line, beams/columns, where the wall is). Positions there run the other way."""
+    c = S.c; wl = L if wall in "NS" else W
+    top = sorted([(wl - p, h) for p, h in (e or {}).get("ceiling_line") or [(0, H), (wl, H)]])
+    Hm = max(h for _, h in top); s = min(bw / wl, bh / Hm); ox, oy = x0, y0
+    c.setStrokeColor(INK); c.setLineWidth(1); c.setFillColor(colors.white)
+    _poly(c, [(ox, oy), (ox + wl * s, oy)] + [(ox + u * s, oy + h * s) for u, h in reversed(top)])
+    if e and e.get("wall_spans") and [tuple(x) for x in e["wall_spans"]] != [(0, round(wl))]:   # an L-shaped room: where this side has no wall
+        have = sorted((wl - b, wl - a) for a, b in e["wall_spans"]); cur = 0
+        c.setFillColor(colors.HexColor("#f3f3f3")); c.setStrokeColor(GREY); c.setDash(2, 2)
+        for a, b in have + [(wl, wl)]:
+            if a - cur > 10: c.rect(ox + cur * s, oy, (a - cur) * s, Hm * s, stroke=1, fill=1); S.text("(set back)", ox + (cur + a) / 2 * s, oy + Hm / 2 * s, 6, col=GREY, centre=True)
+            cur = max(cur, b)
+        c.setDash()
     ceil = (f or {}).get("ceiling") or {}
     if ceil.get("type") in ("COVE", "ISLAND"):
-        drop = ceil.get("drop", 250); c.setFillColor(colors.HexColor("#eeeeee")); c.rect(ox, oy + (H - drop) * s, wl * s, drop * s, stroke=1, fill=1)
-        S.leader(ox + 6 * mm, oy + (H - drop / 2) * s, ox - 14 * mm, oy + (H - drop / 2) * s + 6 * mm, "false ceiling with indirect (cove) light")
+        drop = ceil.get("drop", 250); c.setFillColor(colors.HexColor("#eeeeee")); c.setStrokeColor(INK)
+        _poly(c, [(ox + u * s, oy + (h - drop) * s) for u, h in top] + [(ox + u * s, oy + h * s) for u, h in reversed(top)], fill=True)
+        h0 = top[0][1]
+        S.leader(ox + 6 * mm, oy + (h0 - drop / 2) * s, ox - 14 * mm, oy + (h0 - drop / 2) * s + 6 * mm, "false ceiling with indirect (cove) light")
+    for st in (e or {}).get("structures") or []:                                         # beams in section / columns against the wall
+        u0 = wl - st["x"] - st["width"]; z = st["z"]
+        col = st["kind"] in ("COLUMN", "PILLAR")
+        c.setFillColor(colors.HexColor("#8f8f8f") if col else colors.HexColor("#d9c9e6")); c.setStrokeColor(INK); c.setLineWidth(0.7)
+        c.rect(ox + u0 * s, oy + z * s, st["width"] * s, (Hm - z) * s if col else (min(h for _, h in top) - z) * s, stroke=1, fill=1)
+        if not col: S.text(f"{st['label'].upper()} U/S {S.d(z)}", ox + (u0 + st["width"] / 2) * s, oy + z * s - 3 * mm, 5.5, col=MAG, centre=True)
     flip = wall in ("N", "W")
     # openings on this wall
     for o in ops:
-        if o["wall"] != wall: continue
+        if o["wall"] != wall or o.get("angled"): continue          # inner / angled walls aren't on this side
         a = (wl - o["offset"] - o["width"]) if flip else o["offset"]
         c.setFillColor(CYAN if o["kind"] == "WINDOW" else colors.HexColor("#8b6f55")); c.setStrokeColor(INK); c.setLineWidth(1.4)
         c.rect(ox + a * s, oy + o["sill"] * s, o["width"] * s, o["height"] * s, stroke=1, fill=1)
@@ -211,7 +268,8 @@ def _elevation(S: Sheet, wall, L, W, H, objs, ops, f, x0, y0, bw, bh, title):
             S.text((o.get("category") or "").upper(), ox + (u0 + ln / 2) * s, oy + (z + hh / 2) * s, 5.5, col=RED, centre=True)
     # dimension chain under the wall: openings + rest
     S.dim(ox, oy, ox + wl * s, oy, S.d(wl), off=-6 * mm)
-    S.dim(ox + wl * s, oy, ox + wl * s, oy + H * s, S.d(H), off=6 * mm)
+    S.dim(ox + wl * s, oy, ox + wl * s, oy + top[-1][1] * s, S.d(top[-1][1]), off=6 * mm)
+    if abs(top[0][1] - top[-1][1]) > 5: S.dim(ox, oy, ox, oy + top[0][1] * s, S.d(top[0][1]), off=-6 * mm)     # sloped: both ends
     S.text(title, ox, oy - 12 * mm, 11)
 
 
@@ -321,7 +379,7 @@ def _kitchen_run(S: Sheet, wall, L, W, H, objs, ops, x0, y0, bw, bh, label):
         u = o["x"] if wall in "NS" else o["y"]; ln = o["length"] if wall in "NS" else o["width"]
         return (wl - u - ln if flip else u), ln
     for o in ops:
-        if o["wall"] != wall: continue
+        if o["wall"] != wall or o.get("angled"): continue          # inner / angled walls aren't on this side
         a = (wl - o["offset"] - o["width"]) if flip else o["offset"]
         c.setFillColor(CYAN); c.setStrokeColor(INK); c.setLineWidth(2.2); c.rect(ox + a * s, oy + o["sill"] * s, o["width"] * s, o["height"] * s, stroke=1, fill=1); c.setLineWidth(0.8)
     base = sorted([o for o in run if (o.get("z") or 0) < 1200], key=lambda o: pos(o)[0])
@@ -407,28 +465,35 @@ def _sym(S: Sheet, kind, x, y, r=1.6 * mm):
     c.restoreState()
 
 
-def _light_detail(S: Sheet, rows: list, latest: dict, fins: dict, room_openings):
+def _light_detail(S: Sheet, rows: list, latest: dict, fins: dict, room_openings, shells=None):
     placed = [r for r in rows if r["placed"] and r["L"] and latest.get(r["id"])]
     if not placed: return False
     S.page("light detail"); c = S.c
     x0, y0 = min(r["x"] for r in placed) - 300, min(r["y"] for r in placed) - 300
     x1, y1 = max(r["x"] + r["L"] for r in placed) + 300, max(r["y"] + r["W"] for r in placed) + 300
-    bw, bh = PW - 100 * mm, PH - 60 * mm; s = min(bw / (x1 - x0), bh / (y1 - y0)); ox, oy = 18 * mm, 38 * mm
+    bw, bh = PW - 100 * mm, PH - 72 * mm; s = min(bw / (x1 - x0), bh / (y1 - y0)); ox, oy = 18 * mm, 48 * mm   # room for outward door swings
     entry = None
     for r in placed:
         des = latest[r["id"]]; objs = des.design_json.get("objects", []); f = fins.get(r["id"]) or {}
         rx, ry = ox + (r["x"] - x0) * s, oy + (r["y"] - y0) * s; ops = room_openings(r["id"])
-        _plan(S, r["L"], r["W"], [], ops, rx - 300 * s, ry - 300 * s, (r["L"] + 600) * s, (r["W"] + 600) * s, names=False, markers=False, dims=False)
+        sh = (shells or {}).get(r["id"])
+        _plan(S, r["L"], r["W"], [], ops, rx - 300 * s, ry - 300 * s, (r["L"] + 600) * s, (r["W"] + 600) * s, names=False, markers=False, dims=False, shell=sh)
         for o in objs:
             c.setStrokeColor(colors.HexColor("#cfcfcf")); c.setLineWidth(0.4); c.rect(rx + o["x"] * s, ry + o["y"] * s, o["length"] * s, o["width"] * s)
         S.text(r["name"].upper(), rx + r["L"] * s / 2, ry + r["W"] * s / 2 + 3 * mm, 7, centre=True)
-        ce = mep.ceiling(r["L"], r["W"], r["H"], objs)
+        ce = mep.ceiling(r["L"], r["W"], r["H"], objs, sh)
         for lt in ce["lights"]: _sym(S, "18W" if lt["type"] == "DOWNLIGHT" else "7W", rx + lt["x"] * s, ry + lt["y"] * s)
         if ce.get("fan") and (r["room_type"] or "").upper() not in ("BATHROOM", "WASH_AREA", "UTILITY", "POOJA", "STORE"): _sym(S, "FAN", rx + ce["fan"]["x"] * s, ry + ce["fan"]["y"] * s)
         cv = f.get("ceiling") or {}
         if cv.get("type") in ("COVE", "ISLAND"):
             b = cv.get("border", 600); c.setStrokeColor(RED); c.setLineWidth(1)
-            for (a1, b1, a2, b2) in ((b, b, r["L"] - b, b), (b, r["W"] - b, r["L"] - b, r["W"] - b)): c.line(rx + a1 * s, ry + b1 * s, rx + a2 * s, ry + b2 * s)
+            if sh and len(sh["outline"]) > 4:                                           # odd room: the profile light follows the walls
+                from shapely.geometry import Polygon
+                ring = Polygon(sh["outline"]).buffer(-b, join_style=2)
+                for g in getattr(ring, "geoms", [ring]):
+                    if not g.is_empty: _poly(c, [(rx + x * s, ry + y * s) for x, y in list(g.exterior.coords)[:-1]])
+            else:
+                for (a1, b1, a2, b2) in ((b, b, r["L"] - b, b), (b, r["W"] - b, r["L"] - b, r["W"] - b)): c.line(rx + a1 * s, ry + b1 * s, rx + a2 * s, ry + b2 * s)
         for lt in f.get("lights", []):
             if lt["kind"] == "PENDANT" and lt.get("drop"): _sym(S, "WALL", rx + lt["x"] * s, ry + lt["y"] * s)
             else:
@@ -466,7 +531,9 @@ def build(db, pid: str, room_id: str | None = None, units: str | None = None) ->
     if room_id: rows = [r for r in rows if r["id"] == room_id]
     latest = {r["id"]: db.query(m.Design).filter_by(room_id=r["id"]).order_by(m.Design.version.desc()).first() for r in rows}
     fins = {k: (v.design_json.get("finishes") if v else None) for k, v in latest.items()}
-    if not room_id: _light_detail(S, rows, latest, fins, lambda rid: room_openings(db, rid))
+    from app.routers.api import room_shape
+    shells = {r["id"]: room_shape(db, r["id"]) for r in rows}
+    if not room_id: _light_detail(S, rows, latest, fins, lambda rid: room_openings(db, rid), shells)
     renders: dict = {}
     for doc in db.query(m.Document).filter_by(project_id=pid, category="RENDER").order_by(m.Document.created_at.desc()):
         if doc.room_id: renders.setdefault(doc.room_id, []).append(doc)
@@ -477,7 +544,7 @@ def build(db, pid: str, room_id: str | None = None, units: str | None = None) ->
         kind = (r["room_type"] or "").upper()
         if kind == "KITCHEN":
             S.page(f"{r['name']} plan")
-            _plan(S, L, W, objs, ops, 40 * mm, 46 * mm, 300 * mm, 200 * mm, f=f)
+            _plan(S, L, W, objs, ops, 40 * mm, 46 * mm, 300 * mm, 200 * mm, f=f, shell=shells.get(r["id"]))
             def has_run(w):
                 return any((o.get("category") or "").lower().startswith("kitchen") and (o.get("z") or 0) < 1200 and
                            {"S": o["y"] < 250, "N": W - (o["y"] + o["width"]) < 250, "W": o["x"] < 250, "E": L - (o["x"] + o["length"]) < 250}[w] for o in objs)
@@ -489,14 +556,16 @@ def build(db, pid: str, room_id: str | None = None, units: str | None = None) ->
             if not runs: S.text("No kitchen units in this design yet.", 30 * mm, PH / 2, 12)
         else:
             S.page(r["name"])
-            _plan(S, L, W, objs, ops, 24 * mm, 56 * mm, 165 * mm, 98 * mm, f=f)            # room left below the plan for an outward door swing
+            _plan(S, L, W, objs, ops, 24 * mm, 56 * mm, 165 * mm, 98 * mm, f=f, shell=shells.get(r["id"]))            # room left below the plan for an outward door swing
             S.text(r["name"].upper(), 24 * mm + 82 * mm, 56 * mm + 49 * mm, 10, centre=True)
             feat = (f or {}).get("accent")
             wall = feat["wall"] if feat else None
             if not wall:
                 bed = next((o for o in objs if (o.get("category") or "").lower() == "bed"), None)
                 if bed: wall = concept._against(bed, L, W)
-            if wall: _elevation(S, wall, L, W, H, objs, ops, f, 62 * mm, PH - 112 * mm, 128 * mm, 76 * mm, f"ELEVATION {WALL_VIEW[wall]}")
+            if wall:
+                ev = next((x for x in mep.elevations(L, W, H, objs, ops, shells.get(r["id"])) if x["wall"][0] == wall), None)
+                _elevation(S, wall, L, W, H, objs, ops, f, 62 * mm, PH - 112 * mm, 128 * mm, 76 * mm, f"ELEVATION {WALL_VIEW[wall]}", ev)
             bed = next((o for o in objs if (o.get("category") or "").lower() == "bed"), None)
             if bed:
                 bl = bed if concept._against(bed, L, W) in "NS" else {**bed, "length": bed["width"], "width": bed["length"]}

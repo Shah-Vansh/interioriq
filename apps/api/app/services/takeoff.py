@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import models as m
-from app.services import mep
+from app.services import mep, shape as shp
 
 TALL = 1800      # units taller than this, standing against a wall, hide that wall from paint and skirting
 
@@ -78,19 +78,48 @@ def _touching(o, L, W):
     return out
 
 
-def quantities(L: float, W: float, H: float, objs: list[dict], openings=(), finishes: dict | None = None) -> dict:
+def _shell_measures(L, W, H, shell):
+    """M41: wall area along the real outline at the real (sloped / uneven) height, floor = outline minus columns, plus the faces of
+    columns, pillars, beams and ceiling drops that get painted / skirted. Returns (perimeter, wall area, floor area, extra paint, extra skirting, notes)."""
+    from shapely.geometry import box
+    from app.services import cad, shape as shp
+    pg = shp.polygon(L, W, shell.get("shape")); cp = shell.get("ceiling") if (shell.get("ceiling") or {}).get("type") not in (None, "FLAT") else None
+    wall = 0.0
+    for e in shp.edges(L, W, shell.get("shape")):
+        n = 8 if cp else 1
+        hs = [shp.ceiling_at(cp, H, L, W, e["x0"] + (e["x1"] - e["x0"]) * k / n, e["y0"] + (e["y1"] - e["y0"]) * k / n) for k in range(n + 1)]
+        wall += e["length"] * (sum(hs) - (hs[0] + hs[-1]) / 2) / n                      # trapezoid rule along the wall
+    floor = pg.area; paint = skirt = 0.0; notes = []
+    for st in shell.get("structures") or []:
+        b = box(st["x"], st["y"], st["x"] + st["length"], st["y"] + st["width"]).intersection(pg)
+        if b.is_empty: continue
+        exposed = b.exterior.length - b.exterior.intersection(pg.exterior.buffer(1)).length      # faces not built into a wall
+        if st["kind"] in ("COLUMN", "PILLAR"):
+            h = shp.lowest_over(cp, H, L, W, b); paint += exposed * h; skirt += exposed; floor -= b.area
+            notes.append(f"{st['label']} {exposed / 1000:.2f} m round")
+        else:
+            d = st.get("depth") or 0; paint += exposed / 2 * d + b.area                    # the two long sides + the underside (ends sit on walls)
+            notes.append(f"{st['label']} {d:.0f} mm deep")
+    return pg.exterior.length, wall, floor, paint, skirt, notes
+
+
+def quantities(L: float, W: float, H: float, objs: list[dict], openings=(), finishes: dict | None = None, shell: dict | None = None) -> dict:
     """Measured quantities (before waste), each with the basis it came from. With a design concept (finishes) its ceiling, flooring,
     feature wall and decor quantities are used; the feature wall's area is taken off the wall paint."""
-    c = mep.ceiling(L, W, H, objs); e = mep.electrical(L, W, H, objs, openings)
+    c = mep.ceiling(L, W, H, objs, shell); e = mep.electrical(L, W, H, objs, openings)
     open_area = sum(o["width"] * o["height"] for o in openings); doorways = sum(o["width"] for o in openings if o["kind"] == "DOOR")
     pts = {k: sum(1 for p in e["points"] if p["type"] == k) for k in ("SOCKET", "SWITCH", "SWITCHBOARD", "AC", "LIGHT")}
     tall = [o for o in objs if (o.get("z") or 0) + (o.get("height") or 0) > TALL]     # tall units and wall cabinets hide the wall behind them
     hidden_wall = sum(seg * max(0, min((o.get("z") or 0) + (o.get("height") or 0), H) - (o.get("z") or 0)) for o in tall for seg in _touching(o, L, W))
     hidden_run = sum(seg for o in tall if not (o.get("z") or 0) for seg in _touching(o, L, W))   # only floor-standing units hide the skirting
-    perim = 2 * (L + W)
-    walls = max(0.0, perim * H - hidden_wall - open_area)
+    perim = 2 * (L + W); wall_area = perim * H; floor_area = L * W; extra_paint = extra_skirt = 0.0; snotes = []
+    odd = bool(shell) and (not shp.is_rect(shell.get("shape")) or (shell.get("ceiling") or {}).get("type") not in (None, "FLAT") or shell.get("structures"))
+    if odd: perim, wall_area, floor_area, extra_paint, extra_skirt, snotes = _shell_measures(L, W, H, shell)
+    walls = max(0.0, wall_area + extra_paint - hidden_wall - open_area)
+    shell_note = (" (room outline" + (", sloped/uneven ceiling" if (shell.get("ceiling") or {}).get("type") not in (None, "FLAT") else "")
+                  + (", " + ", ".join(snotes) if snotes else "") + ")") if odd else ""
     q = {
-        "CEILING_GYPSUM": (c["gypsum_area_m2"], f"{L:.0f} × {W:.0f} mm room"),
+        "CEILING_GYPSUM": (c["gypsum_area_m2"], f"{L:.0f} × {W:.0f} mm room" + (" outline" if odd else "")),
         "COVE_STRIP": (c["cove_strip_m"], f"cove {mep.COVE} mm from the walls"),
         "DOWNLIGHT": (sum(1 for x in c["lights"] if x["type"] == "DOWNLIGHT"), "ceiling plan grid"),
         "SPOTLIGHT": (sum(1 for x in c["lights"] if x["type"] == "SPOTLIGHT"), "ceiling plan"),
@@ -98,10 +127,11 @@ def quantities(L: float, W: float, H: float, objs: list[dict], openings=(), fini
         "SOCKET": (pts["SOCKET"], "electrical layout"), "SWITCH": (pts["SWITCH"], "electrical layout"),
         "SWITCHBOARD": (pts["SWITCHBOARD"], "electrical layout"), "AC_POINT": (pts["AC"], "electrical layout"),
         "LIGHT_POINT": (pts["LIGHT"], "electrical layout"),
-        "WALL_PAINT": (round(walls / 1e6, 2), f"walls {perim / 1000:.2f} m × {H / 1000:.2f} m − {hidden_wall / 1e6:.2f} sq.m behind tall units"
+        "WALL_PAINT": (round(walls / 1e6, 2), (f"walls {perim / 1000:.2f} m × {H / 1000:.2f} m" if not odd else f"walls {perim / 1000:.2f} m round, {wall_area / 1e6:.2f} sq.m"
+                                               + (f" + {extra_paint / 1e6:.2f} sq.m columns/beams" if extra_paint else "") + shell_note) + f" − {hidden_wall / 1e6:.2f} sq.m behind tall units"
                                                + (f" − {open_area / 1e6:.2f} sq.m doors/windows" if open_area else "")),
-        "FLOORING": (round(L * W / 1e6, 2), "full floor area"),
-        "SKIRTING": (round(max(0.0, perim - hidden_run - doorways) / 1000, 2), f"perimeter {perim / 1000:.2f} m − {hidden_run / 1000:.2f} m behind tall units"
+        "FLOORING": (round(floor_area / 1e6, 2), "full floor area" + (" (outline, less columns)" if odd else "")),
+        "SKIRTING": (round(max(0.0, perim + extra_skirt - hidden_run - doorways) / 1000, 2), f"perimeter {perim / 1000:.2f} m" + (f" + {extra_skirt / 1000:.2f} m round columns" if extra_skirt else "") + f" − {hidden_run / 1000:.2f} m behind tall units"
                                                                          + (f" − {doorways / 1000:.2f} m doorways" if doorways else "")),
     }
     if finishes:
@@ -109,7 +139,7 @@ def quantities(L: float, W: float, H: float, objs: list[dict], openings=(), fini
         cq = concept.quantities(finishes); c2 = finishes.get("ceiling") or {}
         q["CEILING_GYPSUM"] = (c2.get("gypsum_sqm", 0) if c2.get("type") in ("COVE", "ISLAND") else 0, f"concept: {c2.get('label', 'ceiling')}")
         q["COVE_STRIP"] = (c2.get("cove_rm", 0), f"concept: {c2.get('label', 'ceiling')}")
-        if c2.get("type") == "GRID": q["CEILING_GRID"] = (round(L * W / 1e6, 2), "concept: grid ceiling, full room")
+        if c2.get("type") == "GRID": q["CEILING_GRID"] = (round(c["gypsum_area_m2"], 2), "concept: grid ceiling, full room")
         fl = finishes.get("floor") or {}
         if fl.get("kind"): q["FLOORING"] = (0, "replaced by the concept's flooring"); q[f"FLOOR_{fl['kind']}"] = (fl.get("area_sqm", round(L * W / 1e6, 2)), f"concept: {fl.get('label', '')}")
         a = finishes.get("accent")
@@ -146,9 +176,9 @@ def rules(db: Session) -> dict:
 def configured(db: Session) -> bool: return any(r["sku"] for r in rules(db).values())
 
 
-def plan(db: Session, L: float, W: float, H: float, objs: list[dict], openings=(), finishes: dict | None = None) -> dict:
+def plan(db: Session, L: float, W: float, H: float, objs: list[dict], openings=(), finishes: dict | None = None, shell: dict | None = None) -> dict:
     """Priced take-off: lines to add (item + purchase qty in its unit) and what couldn't be added and why."""
-    qs, rs = quantities(L, W, H, objs, openings, finishes), rules(db)
+    qs, rs = quantities(L, W, H, objs, openings, finishes, shell), rules(db)
     skus = [r["sku"] for r in rs.values() if r["sku"]]
     items = {i.sku.upper(): i for i in db.query(m.FurnitureItem).filter(func.upper(m.FurnitureItem.sku).in_([s.upper() for s in skus]))} if skus else {}
     lines, skipped, rows = [], [], []
@@ -173,5 +203,6 @@ def plan(db: Session, L: float, W: float, H: float, objs: list[dict], openings=(
 
 def for_design(db: Session, room_id: str, objs: list[dict], finishes: dict | None = None) -> dict:
     from app.routers.api import _room_dims, room_openings          # the single source of room dimensions (verified measurements win) + doors/windows
+    from app.routers.api import room_shape
     L, W, H = _room_dims(db, room_id)
-    return plan(db, L, W, H, objs, room_openings(db, room_id), finishes)
+    return plan(db, L, W, H, objs, room_openings(db, room_id), finishes, room_shape(db, room_id))

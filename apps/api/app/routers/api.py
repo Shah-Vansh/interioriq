@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import create_token, current_user, require_roles, verify_password
 from app.models import models as m
-from app.services import layouts, cad, flow, geometry
+from app.services import layouts, cad, flow, geometry, shape
 from app.services.cost_engine import Line, compute
 from app.services.providers import LocalLLMProvider
 from app.services.measurements import upsert_measurement
@@ -137,12 +137,38 @@ def put_measurement(rid: str, b: MeasurementIn, db: Session = Depends(get_db), u
             "reason": None if applied else "Rejected: existing value has equal or higher source priority"}
 
 def room_openings(db: Session, rid: str) -> list[dict]:
-    return [{"id": o.id, "kind": o.kind, "wall": o.wall, "offset": o.offset_mm, "width": o.width_mm, "height": o.height_mm, "sill": o.sill_mm or 0,
-             "swing": o.swing, "label": o.label or (f"{'Door' if o.kind == 'DOOR' else 'Window'} {o.wall}")}
-            for o in db.query(m.Opening).filter_by(room_id=rid).order_by(m.Opening.created_at)]
+    """Doors/windows with their end points on the wall line (x0,y0,x1,y1) and inward normal (nx,ny) when the room is measured (M41)."""
+    out = [{"id": o.id, "kind": o.kind, "wall": o.wall, "offset": o.offset_mm, "width": o.width_mm, "height": o.height_mm, "sill": o.sill_mm or 0,
+            "swing": o.swing, "label": o.label or (f"{'Door' if o.kind == 'DOOR' else 'Window'} {o.wall}"), "edge": o.edge}
+           for o in db.query(m.Opening).filter_by(room_id=rid).order_by(m.Opening.created_at)]
+    if not out: return out
+    try: L, W, _ = _room_dims(db, rid)
+    except HTTPException: return out
+    room = db.get(m.Room, rid); sh = room.shape if room else None
+    for o in out:
+        try: o.update(shape.resolve_opening(L, W, sh, o))
+        except shape.ShapeError: o["off_wall"] = True             # the room shape changed under it: drawn where it was, reported by the survey screen
+    return out
+
+def room_structures(db: Session, rid: str) -> list[dict]:
+    return [{"id": s.id, "kind": s.kind, "x": s.x_mm, "y": s.y_mm, "length": s.length_mm, "width": s.width_mm, "depth": s.depth_mm or 0,
+             "label": s.label or s.kind.replace("_", " ").title()} for s in db.query(m.RoomStructure).filter_by(room_id=rid).order_by(m.RoomStructure.created_at)]
+
+def room_shape(db: Session, rid: str) -> dict | None:
+    """Everything about the room's shell (M41) for drawings / 3D / the survey screen: outline, walls, ceiling profile, structures."""
+    try: L, W, H = _room_dims(db, rid)
+    except HTTPException: return None
+    room = db.get(m.Room, rid); sh, cp = room.shape, room.ceiling_profile
+    lo, hi = shape.ceiling_range(cp, H, L, W)
+    return {"L": L, "W": W, "H": H, "shape": sh or {"type": "RECT"}, "outline": [[x, y] for x, y in shape.outline(L, W, sh)],
+            "edges": [{k: e[k] for k in ("i", "x0", "y0", "x1", "y1", "length", "wall", "side")} for e in shape.edges(L, W, sh)],
+            "area_sqm": round(shape.polygon(L, W, sh).area / 1e6, 2), "ceiling": cp or {"type": "FLAT"}, "ceiling_min": lo, "ceiling_max": hi,
+            "structures": room_structures(db, rid)}
 
 def _geo(db: Session, rid: str, L, W, H) -> geometry.Room:
-    return geometry.Room(L, W, H, openings=room_openings(db, rid))
+    room = db.get(m.Room, rid)
+    return geometry.Room(L, W, H, openings=room_openings(db, rid), shape=room.shape if room else None,
+                         ceiling_profile=room.ceiling_profile if room else None, structures=room_structures(db, rid))
 
 def _room_dims(db: Session, rid: str):
     ms = {x.label.lower(): x for x in db.query(m.Measurement).filter_by(room_id=rid)}
@@ -376,12 +402,12 @@ def cad_file(rid: str, kind: str, db: Session = Depends(get_db), user: dict = De
     r = db.get(m.Room, rid)
     if not r: raise HTTPException(404, "Room not found")
     L, W, H = _room_dims(db, rid); objs = _latest_objs(db, rid)
-    ops = room_openings(db, rid)
-    if kind == "floor-plan": data = cad.floor_plan(r.name, L, W, ops)
-    elif kind == "furniture": data = cad.furniture_layout(r.name, L, W, objs, ops)
+    ops = room_openings(db, rid); sh = room_shape(db, rid)
+    if kind == "floor-plan": data = cad.floor_plan(r.name, L, W, ops, sh)
+    elif kind == "furniture": data = cad.furniture_layout(r.name, L, W, objs, ops, sh)
     elif kind == "elevation-north":    # only what stands against the north wall (previously every object was drawn on it)
         from app.services import mep
-        nw = next(w for w in mep.elevations(L, W, H, objs, ops) if w["wall"] == "NORTH"); data = cad.elevation(r.name, L, H, nw["items"], nw["openings"])
+        nw = next(w for w in mep.elevations(L, W, H, objs, ops, sh) if w["wall"] == "NORTH"); data = cad.elevation(r.name, L, H, nw["items"], nw["openings"], nw)
     else: raise HTTPException(404, "Unknown drawing type")
     return Response(data, media_type="application/dxf", headers={"Content-Disposition": f'attachment; filename="{kind}.dxf"'})
 

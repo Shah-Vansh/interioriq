@@ -9,7 +9,8 @@ manufacturing → delivery → installation → QC → handover, on real data.
 - Rule-based layouts for bedroom, living, dining, kitchen, study, bathroom and utility, validated with Shapely; a design chat adjusts them
 - Whole-home design: every room type (verandah, foyer, living, dining, kitchen, bedrooms, bathrooms, wash area, pooja, store), one style for
   the whole home (feature walls, ceilings, floors, curtains, decor), rooms on one house plan, the whole home in 3D, a design presentation PDF
-- Realistic 3D editor (React Three Fiber) with free rotation, colours, sunlight and shadows; DXF drawings (plan, ceiling, electrical, elevations)
+- Realistic 3D editor (React Three Fiber) with free rotation, colours, sunlight, ambient occlusion and path-traced photo renders;
+  L-shaped / odd rooms, sloped ceilings, beams and columns; DXF drawings (plan, ceiling, electrical, elevations)
 - Working drawings for the site team (A3, feet-inches): light detail, room plans and elevations, bed, wardrobe and kitchen details;
   shop drawings and cutting lists per work order
 - Catalogue with photos, Excel import, price/stock ledgers and per-supplier quotes; BOQ + quotation PDFs (₹, Gujarati/Hindi, editable payment terms);

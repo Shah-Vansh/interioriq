@@ -16,7 +16,8 @@ import {
 import { cn, fmt } from '@/lib/utils'
 import { Camera, Lightbulb, PersonStanding, Sparkles, Sun } from 'lucide-react'
 import { FurnitureModel } from '@/components/design/three/models'
-import { Lighting, RealisticRoom, eyePoint, facing, isNight } from '@/components/design/three/scene'
+import { Lighting, PhotoRender, RealisticFx, RealisticRoom, eyePoint, facing, isNight } from '@/components/design/three/scene'
+import type { Shell } from '@/lib/room-shell'
 import { M } from '@/components/design/three/materials'
 
 const COLOURS: Record<string, string> = { Bed: '#b45309', Wardrobe: '#78716c', Study: '#0e7490', Sofa: '#6d28d9', Chair: '#65a30d' }
@@ -104,7 +105,8 @@ export function Editor3D() {
   const [finishes, setFinishes] = useState<DesignDetail['finishes']>(null)   // the room's design concept (drawn in Realistic view)
   const canvasWrap = useRef<HTMLDivElement>(null)
   const [ops, setOps] = useState<{ id: string; kind: string; wall: string; offset: number; width: number; height: number; sill: number }[]>([])
-  useEffect(() => { setOps([]); if (sel.roomId) api.get<{ openings: typeof ops }>(`/rooms/${sel.roomId}/openings`).then(r => setOps(r.openings)).catch(() => {}) }, [sel.roomId])
+  const [shell, setShell] = useState<Shell | null>(null)               // M41: room outline, sloped ceiling, beams/columns
+  useEffect(() => { setOps([]); setShell(null); if (sel.roomId) api.get<{ openings: typeof ops; shape: Shell | null }>(`/rooms/${sel.roomId}/openings`).then(r => { setOps(r.openings); setShell(r.shape ?? null) }).catch(() => {}) }, [sel.roomId])
   const [dims, setDims] = useState<{ L: number; W: number; H: number } | null>(null)
   const [hist, setHist] = useState<History>(createHistory([]))
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -238,6 +240,11 @@ export function Editor3D() {
       setHist(createHistory(d.objects)); setSavedJson(JSON.stringify(d.objects)); setLoadedVersion(d.version); setSelectedId(null); setMsg(null); setFinishes(d.finishes ?? null)
     } catch (e) { setMsg({ ok: false, text: e instanceof ApiError ? e.message : 'Load failed' }) }
   }
+  // photo render (path traced): quality = samples per pixel; the camera holds still while it renders
+  const [photo, setPhoto] = useState<{ target: number; scale: number; n: number; done: boolean } | null>(null)
+  const [quality, setQuality] = useState('good')
+  const QUALITY: Record<string, { samples: number; scale: number }> = { draft: { samples: 96, scale: 0.75 }, good: { samples: 256, scale: 1 }, best: { samples: 800, scale: 1 } }
+  const startPhoto = () => { setSelectedId(null); setMsg(null); setPhoto({ target: QUALITY[quality].samples, scale: QUALITY[quality].scale, n: 0, done: false }) }
   const snapshot = async () => {
     const c = canvasWrap.current?.querySelector('canvas'); if (!c || !sel.projectId) return
     const blob: Blob | null = await new Promise(res => c.toBlob(b => res(b), 'image/png'))
@@ -257,7 +264,7 @@ export function Editor3D() {
   }
 
   const g = selected && dims ? gaps(selected, dims.L, dims.W) : null
-  const eye = useMemo(() => (dims && view === 'eye' ? eyePoint(dims.L, dims.W, ops, objects) : undefined), [dims, view, ops]) // eslint-disable-line react-hooks/exhaustive-deps
+  const eye = useMemo(() => (dims && view === 'eye' ? eyePoint(dims.L, dims.W, ops, objects, shell?.outline) : undefined), [dims, view, ops, shell]) // eslint-disable-line react-hooks/exhaustive-deps
   const total = objects.reduce((a, o) => a + o.price, 0)
   const tbtn = 'flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded border transition-colors disabled:opacity-35 disabled:cursor-not-allowed'
 
@@ -279,6 +286,10 @@ export function Editor3D() {
           <input type="range" aria-label="Time of day" min={6} max={21} step={0.25} value={hour} onChange={e => setHour(Number(e.target.value))} className="w-24 accent-amber-700" />
           <span className="w-10 font-mono">{`${Math.floor(hour)}:${String(Math.round((hour % 1) * 60)).padStart(2, '0')}`}</span></label>}
         {realistic && <button className={cn(tbtn, lightsOn || isNight(hour) ? 'bg-amber-50 border-amber-300 text-amber-800' : 'border-stone-200')} onClick={() => setLightsOn(v => !v)} aria-pressed={lightsOn} title="Ceiling lights"><Lightbulb className="w-3.5 h-3.5" />Lights</button>}
+        {realistic && <div className="flex items-center gap-1">
+          <select aria-label="Photo quality" value={quality} onChange={e => setQuality(e.target.value)} disabled={!!photo} className="text-xs border border-stone-200 rounded px-1.5 py-1.5 bg-white" title="More samples = cleaner image, longer render">
+            <option value="draft">Draft</option><option value="good">Good</option><option value="best">Best</option></select>
+          <button className={cn(tbtn, 'bg-amber-700 text-white border-amber-700 hover:bg-amber-800')} onClick={startPhoto} disabled={!dims || !!photo} title="Path-traced photo of this view: real light bounce, soft shadows, daylight through the windows"><Camera className="w-3.5 h-3.5" />Photo render</button></div>}
         <div className="flex-1" />
         {versions.length > 0 && (
           <select value={loadedVersion ?? ''} onChange={e => loadVersion(Number(e.target.value))} className="text-xs border border-stone-200 rounded px-2 py-1.5 bg-white">
@@ -316,10 +327,11 @@ export function Editor3D() {
 
           {/* canvas */}
           <div ref={canvasWrap} className="flex-1 relative bg-stone-100">
-            <Canvas key={realistic ? 'real' : 'quick'} shadows={realistic ? 'soft' : false} dpr={[1, 2]} gl={{ preserveDrawingBuffer: true, antialias: true }} camera={{ fov: 45, near: 0.1, far: 100 }} onPointerMissed={() => setSelectedId(null)}>
+            <Canvas key={realistic ? 'real' : 'quick'} frameloop="demand" shadows={realistic ? 'soft' : false} dpr={[1, 2]} gl={{ preserveDrawingBuffer: true, antialias: true }} camera={{ fov: 45, near: 0.1, far: 100 }} onPointerMissed={() => setSelectedId(null)}>
               {realistic ? <>
                 <Lighting L={dims.L / 1000} W={dims.W / 1000} H={dims.H / 1000} hour={hour} />
-                <RealisticRoom L={dims.L / 1000} W={dims.W / 1000} H={dims.H / 1000} ops={ops} hour={hour} lightsOn={lightsOn} wet={['BATHROOM', 'UTILITY', 'KITCHEN', 'WASH_AREA'].includes(sel.roomType)} finishes={finishes} />
+                <RealisticRoom L={dims.L / 1000} W={dims.W / 1000} H={dims.H / 1000} ops={ops} hour={hour} lightsOn={lightsOn} wet={['BATHROOM', 'UTILITY', 'KITCHEN', 'WASH_AREA'].includes(sel.roomType)} finishes={finishes} shell={shell} />
+                {photo ? <PhotoRender samples={photo.target} scale={photo.scale} onProgress={n => setPhoto(p => p && { ...p, n })} onDone={() => setPhoto(p => p && { ...p, done: true })} /> : <RealisticFx />}
               </> : <>
                 <color attach="background" args={['#f0ece6']} />
                 <ambientLight intensity={0.8} /><directionalLight position={[6, 10, 4]} intensity={1.1} /><hemisphereLight args={['#ffffff', '#d6d3d1', 0.4]} />
@@ -328,9 +340,15 @@ export function Editor3D() {
               </>}
               <CameraRig view={view} L={dims.L} W={dims.W} eye={eye} />
               {objects.map(o => <Furniture key={o.id} o={o} selected={o.id === selectedId} flagged={flagged.has(o.id)} onDown={onDown} onMove={onMove} onUp={endDrag} realistic={realistic} room={dims} />)}
-              <OrbitControls key={view} makeDefault target={view === 'eye' && eye ? eye.target : [dims.L / 2000, 0, -dims.W / 2000]} enabled={!dragging} enableRotate={view !== 'top'} enableDamping dampingFactor={0.08}
+              <OrbitControls key={view} makeDefault target={view === 'eye' && eye ? eye.target : [dims.L / 2000, 0, -dims.W / 2000]} enabled={!dragging && !photo} enableRotate={view !== 'top'} enableDamping dampingFactor={0.08}
                 maxPolarAngle={view === 'eye' ? Math.PI * 0.62 : Math.PI / 2 - 0.02} minDistance={view === 'eye' ? 0.3 : 0.5} />
             </Canvas>
+            {photo && <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-white/95 border border-stone-200 rounded-lg shadow px-4 py-2.5 text-xs flex items-center gap-3" data-testid="photo-status">
+              {photo.done ? <span className="text-green-700 font-medium">Photo ready ({photo.target} samples)</span>
+                : <><Loader2 className="w-3.5 h-3.5 animate-spin text-amber-700" /><span>Rendering photo… {photo.n} / {photo.target} samples</span>
+                  <span className="w-28 h-1.5 bg-stone-200 rounded overflow-hidden"><span className="block h-full bg-amber-600" style={{ width: `${Math.min(100, photo.n / photo.target * 100)}%` }} /></span></>}
+              <button className="text-xs px-2 py-1 rounded bg-stone-900 text-white" onClick={snapshot} disabled={!photo.done && photo.n < 16}>Save photo</button>
+              <button className="text-xs px-2 py-1 rounded border border-stone-300" onClick={() => setPhoto(null)}>{photo.done ? 'Back to editing' : 'Stop'}</button></div>}
             <div className="absolute bottom-3 left-3 text-[11px] bg-white/90 border border-stone-200 rounded px-2.5 py-1.5 text-stone-500">
               Room {dims.L} × {dims.W} × {dims.H} mm · drag to move · R rotate · Ctrl+D duplicate · Del delete · arrows nudge
             </div>

@@ -66,15 +66,18 @@ def arrange(rows: list[dict], only_unplaced: bool = True) -> dict:
 def house_dxf(db, pid: str, project_name: str) -> bytes:
     """One DXF of the whole home: each room = a block (walls, openings, furniture of its latest design, name + size) inserted at its plan
     position, plus overall dimensions."""
-    from app.routers.api import room_openings                                     # one place builds openings
+    from app.routers.api import room_openings, room_shape                         # one place builds openings + the room shell
+    from shapely.geometry import Polygon
     d = ezdxf.new("R2010"); msp = d.modelspace()
-    for n, c in (("WALLS", 7), ("FURNITURE", 2), ("DOORS", 3), ("WINDOWS", 4), ("DIMENSIONS", 1), ("TEXT", 7)): d.layers.add(n, color=c)
+    for n, c in (("WALLS", 7), ("FURNITURE", 2), ("DOORS", 3), ("WINDOWS", 4), ("DIMENSIONS", 1), ("TEXT", 7), ("STRUCTURE", 8), ("BEAMS", 5)): d.layers.add(n, color=c)
+    d.linetypes.add("DASHED", pattern=[12.0, 6.0, -6.0], description="Dashed __ __ __")
     rows = [r for r in boxes(db, pid) if r["placed"] and r["L"]]
     for i, r in enumerate(rows):
         blk = d.blocks.new(name=f"ROOM_{i + 1}")
-        blk.add_lwpolyline([(0, 0), (r["L"], 0), (r["L"], r["W"]), (0, r["W"])], close=True, dxfattribs={"layer": "WALLS", "lineweight": 50})
-        blk.add_lwpolyline([(-115, -115), (r["L"] + 115, -115), (r["L"] + 115, r["W"] + 115), (-115, r["W"] + 115)], close=True, dxfattribs={"layer": "WALLS"})
-        cad.draw_openings(blk, r["L"], r["W"], room_openings(db, r["id"]))
+        sh = room_shape(db, r["id"]); pts = [tuple(p) for p in sh["outline"]]                 # M41: L-shaped / angled rooms
+        blk.add_lwpolyline(pts, close=True, dxfattribs={"layer": "WALLS", "lineweight": 50})
+        blk.add_lwpolyline([(round(x), round(y)) for x, y in list(Polygon(pts).buffer(115, join_style=2).exterior.coords)[:-1]], close=True, dxfattribs={"layer": "WALLS"})
+        cad.draw_openings(blk, r["L"], r["W"], room_openings(db, r["id"])); cad.draw_structures(blk, sh)
         des = db.query(m.Design).filter_by(room_id=r["id"]).order_by(m.Design.version.desc()).first()
         for o in (des.design_json.get("objects", []) if des else []):
             blk.add_lwpolyline(geometry.corners(o), close=True, dxfattribs={"layer": "FURNITURE"})

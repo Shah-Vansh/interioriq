@@ -12,7 +12,7 @@ from app.services.cost_engine import D, inr
 SEV = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
 
 
-def _days(a, b) -> int: return (a - b).days
+def _days(a, b) -> int: return (a.date() - b.date()).days       # calendar days (handover dates are dates; counting hours read "3 days late" as 4 after midday)
 
 
 def _aware(t):

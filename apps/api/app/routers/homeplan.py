@@ -21,11 +21,12 @@ def _project(db: Session, pid: str) -> m.Project:
 
 
 def plan_out(db: Session, pid: str) -> dict:
-    from app.routers.api import room_openings
+    from app.routers.api import room_openings, room_shape
     rows = homeplan.boxes(db, pid)
     for r in rows:
         des = db.query(m.Design).filter_by(room_id=r["id"]).order_by(m.Design.version.desc()).first()
         r["openings"] = room_openings(db, r["id"])
+        r["shell"] = room_shape(db, r["id"])                     # M41: outline, ceiling profile, beams/columns (None = not measured)
         r["objects"] = des.design_json.get("objects", []) if des else []
         r["finishes"] = (des.design_json.get("finishes") if des else None)
         r["design_version"] = des.version if des else None

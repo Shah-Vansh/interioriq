@@ -14,6 +14,63 @@ function canvasTex(key: string, size: number, draw: (g: CanvasRenderingContext2D
 let seed = 7
 const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647 }
 
+/** Normal map from a height field drawn in grey (white = high): the surface relief (grain, weave, plank joints, grout, mortar) that
+ *  makes light catch a material the way it does in a photo. Linear colour space; repeats like the colour map it goes with. */
+const ncache = new Map<string, THREE.Texture>()
+function normalTex(key: string, size: number, drawHeight: (g: CanvasRenderingContext2D, s: number, r: () => number) => void, repeat: [number, number] = [1, 1], strength = 2) {
+  const k = `${key}:${repeat.join('x')}:${strength}`
+  let t = ncache.get(k)
+  if (t) return t
+  const c = document.createElement('canvas'); c.width = c.height = size
+  const g = c.getContext('2d')!
+  let sd = 11; const r = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647 }
+  g.fillStyle = '#808080'; g.fillRect(0, 0, size, size); drawHeight(g, size, r)
+  const src = g.getImageData(0, 0, size, size).data, out = g.createImageData(size, size), o = out.data
+  const H = (x: number, y: number) => src[(((y + size) % size) * size + ((x + size) % size)) * 4] / 255
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const dx = (H(x + 1, y) - H(x - 1, y)) * strength, dy = (H(x, y + 1) - H(x, y - 1)) * strength
+    const l = Math.hypot(dx, dy, 1), i = (y * size + x) * 4
+    o[i] = (-dx / l * 0.5 + 0.5) * 255; o[i + 1] = (dy / l * 0.5 + 0.5) * 255; o[i + 2] = (1 / l * 0.5 + 0.5) * 255; o[i + 3] = 255
+  }
+  g.putImageData(out, 0, 0)
+  t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(...repeat); t.colorSpace = THREE.NoColorSpace; t.anisotropy = 8
+  ncache.set(k, t); return t
+}
+const N = {
+  wood: (repeat: [number, number]) => normalTex('wood', 512, (g, s, r) => {
+    for (let i = 0; i < 220; i++) { const y = r() * s; g.strokeStyle = `rgba(0,0,0,${0.05 + r() * 0.12})`; g.lineWidth = 0.6 + r() * 1.8; g.beginPath(); g.moveTo(0, y)
+      for (let x = 0; x <= s; x += 16) g.lineTo(x, y + Math.sin(x / (40 + r() * 30) + i) * (2 + r() * 3)); g.stroke() }
+  }, repeat, 1.6),
+  planks: (repeat: [number, number]) => normalTex('planks', 1024, (g, s, r) => {
+    const rows = 8, h = s / rows
+    for (let i = 0; i < 400; i++) { const y = r() * s; g.fillStyle = `rgba(0,0,0,${0.04 + r() * 0.06})`; g.fillRect(0, y, s, 1) }
+    for (let row = 0; row < rows; row++) {
+      g.fillStyle = '#202020'; g.fillRect(0, row * h, s, 3)
+      let x = -r() * 300; while (x < s) { g.fillRect(x, row * h, 3, h); x += 260 + r() * 260 }
+    }
+  }, repeat, 3),
+  weave: (repeat: [number, number]) => normalTex('weave', 256, (g, s) => {
+    for (let i = 0; i < s; i += 4) { g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(i, 0, 2, s); g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(0, i + 2, s, 2) }
+  }, repeat, 1.4),
+  plaster: () => normalTex('plaster', 256, (g, s, r) => {
+    for (let i = 0; i < 1800; i++) { g.fillStyle = r() > 0.5 ? `rgba(0,0,0,${r() * 0.18})` : `rgba(255,255,255,${r() * 0.18})`; g.beginPath(); g.arc(r() * s, r() * s, 1 + r() * 4, 0, 7); g.fill() }
+  }, [3, 3], 0.8),
+  grid: (repeat: [number, number], n: number, line: number) => normalTex(`grid${n}-${line}`, 256, (g, s) => {
+    const w = s / n; g.fillStyle = '#303030'
+    for (let i = 0; i <= n; i++) { g.fillRect(i * w - line / 2, 0, line, s); g.fillRect(0, i * w - line / 2, s, line) }
+  }, repeat, 3),
+  stone: (repeat: [number, number]) => normalTex('stone', 512, (g, s, r) => {
+    let y = 0
+    while (y < s) { const h = 40 + r() * 50; let x = -r() * 60
+      while (x < s) { const w = 60 + r() * 140; g.fillStyle = `rgb(${150 + r() * 80},${150 + r() * 80},${150 + r() * 80})`; g.fillRect(x + 3, y + 3, w - 6, h - 6); g.fillStyle = '#202020'; g.fillRect(x, y, w, 3); g.fillRect(x, y, 3, h); x += w }
+      y += h }
+  }, repeat, 4),
+  brick: (repeat: [number, number]) => normalTex('brick', 512, (g, s) => {
+    const bh = 32, bw = 96; g.fillStyle = '#202020'; g.fillRect(0, 0, s, s); g.fillStyle = '#c0c0c0'
+    for (let row = 0; row * bh < s; row++) for (let x = (row % 2) * -bw / 2; x < s; x += bw) g.fillRect(x + 2, row * bh + 2, bw - 4, bh - 4)
+  }, repeat, 4),
+}
+
 /** Wood grain (long streaks + rings), drawn light-on-dark so a colour tint keeps the grain. */
 export function woodTexture(tone = '#8b5a2b', repeat: [number, number] = [1, 1]) {
   return canvasTex(`wood-${tone}`, 512, (g, s) => {
@@ -167,10 +224,14 @@ export function artTexture(colours: string[]) {
 }
 
 export const M = {
-  wood: (tone = '#7a4a24') => get(`wood${tone}`, () => new THREE.MeshStandardMaterial({ map: woodTexture(tone, [2, 2]), roughness: 0.55, metalness: 0 })),
-  laminate: (tone = '#e9e4dc') => get(`lam${tone}`, () => new THREE.MeshStandardMaterial({ color: tone, roughness: 0.42, metalness: 0 })),
-  fabric: (tone = '#8f9aa6') => get(`fab${tone}`, () => new THREE.MeshStandardMaterial({ map: fabricTexture(tone), roughness: 0.95, metalness: 0 })),
-  linen: () => get('linen', () => new THREE.MeshStandardMaterial({ map: fabricTexture('#f4f1ea'), roughness: 0.9 })),
+  // veneer with a thin lacquer coat: grain relief + a soft clear-coat sheen like a real polished shutter
+  wood: (tone = '#7a4a24') => get(`wood${tone}`, () => new THREE.MeshPhysicalMaterial({ map: woodTexture(tone, [2, 2]), normalMap: N.wood([2, 2]), normalScale: new THREE.Vector2(0.35, 0.35),
+    roughness: 0.48, metalness: 0, clearcoat: 0.25, clearcoatRoughness: 0.35 })),
+  laminate: (tone = '#e9e4dc') => get(`lam${tone}`, () => new THREE.MeshPhysicalMaterial({ color: tone, roughness: 0.38, metalness: 0, clearcoat: 0.15, clearcoatRoughness: 0.4 })),
+  // upholstery: woven relief + sheen (the soft glow fabric has at grazing light)
+  fabric: (tone = '#8f9aa6') => get(`fab${tone}`, () => new THREE.MeshPhysicalMaterial({ map: fabricTexture(tone), normalMap: N.weave([3, 3]), normalScale: new THREE.Vector2(0.5, 0.5),
+    roughness: 0.92, metalness: 0, sheen: 1, sheenRoughness: 0.75, sheenColor: new THREE.Color(tone).lerp(new THREE.Color('#ffffff'), 0.35) })),
+  linen: () => get('linen', () => new THREE.MeshPhysicalMaterial({ map: fabricTexture('#f4f1ea'), normalMap: N.weave([3, 3]), normalScale: new THREE.Vector2(0.4, 0.4), roughness: 0.9, sheen: 0.8, sheenRoughness: 0.8, sheenColor: new THREE.Color('#ffffff') })),
   metal: () => get('metal', () => new THREE.MeshStandardMaterial({ color: '#a8a29e', roughness: 0.3, metalness: 0.9 })),
   black: () => get('blackmetal', () => new THREE.MeshStandardMaterial({ color: '#1c1917', roughness: 0.4, metalness: 0.6 })),
   chrome: () => get('chrome', () => new THREE.MeshStandardMaterial({ color: '#d4d7dc', roughness: 0.28, metalness: 0.75 })),
@@ -185,12 +246,14 @@ export const M = {
   emissive: () => get('lamp', () => new THREE.MeshStandardMaterial({ color: '#fff7e6', emissive: '#fff1d6', emissiveIntensity: 2.2 })),
   red: () => get('flag', () => new THREE.MeshBasicMaterial({ color: '#dc2626', transparent: true, opacity: 0.35, depthWrite: false })),
   hit: () => get('hit', () => new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })),
-  floor: (tone = '#b88a5a', l = 4, w = 4) => get(`floor${tone}${l.toFixed(1)}x${w.toFixed(1)}`, () => new THREE.MeshStandardMaterial({ map: floorTexture(tone, [Math.max(1, l / 2), Math.max(1, w / 2)]), roughness: 0.5 })),
-  tiles: (tone = '#e7e5e4', l = 2, w = 2) => get(`tiles${tone}${l.toFixed(1)}x${w.toFixed(1)}`, () => new THREE.MeshStandardMaterial({ map: tileTexture(tone, [Math.max(1, l * 1.7), Math.max(1, w * 1.7)]), roughness: 0.25 })),
-  ceiling: () => get('ceiling', () => new THREE.MeshStandardMaterial({ map: plasterTexture('#faf8f4'), roughness: 0.95, emissive: '#efe9df', emissiveIntensity: 0.32 })),
+  floor: (tone = '#b88a5a', l = 4, w = 4) => get(`floor${tone}${l.toFixed(1)}x${w.toFixed(1)}`, () => { const rp: [number, number] = [Math.max(1, l / 2), Math.max(1, w / 2)]
+    return new THREE.MeshPhysicalMaterial({ map: floorTexture(tone, rp), normalMap: N.planks(rp), normalScale: new THREE.Vector2(0.6, 0.6), roughness: 0.42, clearcoat: 0.35, clearcoatRoughness: 0.25 }) }),
+  tiles: (tone = '#e7e5e4', l = 2, w = 2) => get(`tiles${tone}${l.toFixed(1)}x${w.toFixed(1)}`, () => { const rp: [number, number] = [Math.max(1, l * 1.7), Math.max(1, w * 1.7)]
+    return new THREE.MeshPhysicalMaterial({ map: tileTexture(tone, rp), normalMap: N.grid(rp, 2, 5), normalScale: new THREE.Vector2(0.8, 0.8), roughness: 0.18, clearcoat: 0.6, clearcoatRoughness: 0.1 }) }),
+  ceiling: () => get('ceiling', () => new THREE.MeshStandardMaterial({ map: plasterTexture('#faf8f4'), roughness: 0.95, emissive: '#efe9df', emissiveIntensity: 0.12 })),
   wallpaper: (tone = '#6b4a32') => get(`wp${tone}`, () => new THREE.MeshStandardMaterial({ map: wallpaperTexture(tone), roughness: 0.85 })),
-  stone: (tone = '#b9ab95') => get(`stone${tone}`, () => new THREE.MeshStandardMaterial({ map: stoneTexture(tone), roughness: 0.9 })),
-  brick: (tone = '#8e4b36') => get(`brick${tone}`, () => new THREE.MeshStandardMaterial({ map: brickTexture(tone), roughness: 0.95 })),
+  stone: (tone = '#b9ab95') => get(`stone${tone}`, () => new THREE.MeshStandardMaterial({ map: stoneTexture(tone), normalMap: N.stone([2, 2]), normalScale: new THREE.Vector2(1.2, 1.2), roughness: 0.9 })),
+  brick: (tone = '#8e4b36') => get(`brick${tone}`, () => new THREE.MeshStandardMaterial({ map: brickTexture(tone), normalMap: N.brick([2, 3]), normalScale: new THREE.Vector2(1.2, 1.2), roughness: 0.95 })),
   jaali: (tone = '#8a5a2b') => get(`jaali${tone}`, () => new THREE.MeshStandardMaterial({ map: jaaliTexture(tone), emissiveMap: jaaliTexture(tone), emissive: '#ffd9a0', emissiveIntensity: 0.6, roughness: 0.7 })),
   terrazzo: (tone = '#e6ddd0') => get(`terr${tone}`, () => new THREE.MeshStandardMaterial({ map: terrazzoTexture(tone), roughness: 0.3 })),
   marbleFloor: () => get('marblefloor', () => new THREE.MeshPhysicalMaterial({ map: marbleTexture('#efeae2'), roughness: 0.15, clearcoat: 0.5 })),
@@ -199,7 +262,7 @@ export const M = {
   art: (colours: string[]) => get(`art${colours.join('')}`, () => new THREE.MeshStandardMaterial({ map: artTexture(colours), roughness: 0.7 })),
   curtain: (tone = '#cfc6b8') => get(`curtain${tone}`, () => new THREE.MeshStandardMaterial({ map: fabricTexture(tone), roughness: 0.95, side: THREE.DoubleSide })),
   led: () => get('led', () => new THREE.MeshStandardMaterial({ color: '#fff4dc', emissive: '#ffe7b8', emissiveIntensity: 3 })),
-  wall: (tone = '#f3efe8') => get(`wall${tone}`, () => new THREE.MeshStandardMaterial({ map: plasterTexture(tone), roughness: 0.92 })),
+  wall: (tone = '#f3efe8') => get(`wall${tone}`, () => new THREE.MeshStandardMaterial({ map: plasterTexture(tone), normalMap: N.plaster(), normalScale: new THREE.Vector2(0.15, 0.15), roughness: 0.9 })),
 }
 
 /** A user-picked colour turns into the right finish for the part. */

@@ -74,6 +74,10 @@ def _opening(db, oid):
     o = db.get(m.Opening, oid); return _via_room(db, o.room_id) if o else None
 
 
+def _structure(db, sid):
+    o = db.get(m.RoomStructure, sid); return _via_room(db, o.room_id) if o else None
+
+
 def _col(model):
     def f(db, rid):
         x = db.get(model, rid); return getattr(x, "project_id", None) if x else None
@@ -81,7 +85,7 @@ def _col(model):
 
 
 RESOLVE = {
-    "projects": lambda db, i: i if db.get(m.Project, i) else None, "rooms": _via_room, "boqs": _boq, "openings": _opening,
+    "projects": lambda db, i: i if db.get(m.Project, i) else None, "rooms": _via_room, "boqs": _boq, "openings": _opening, "structures": _structure,
     "invoices": _col(m.Invoice), "purchase-orders": _col(m.PurchaseOrder), "work-orders": _col(m.WorkOrder), "deliveries": _col(m.DeliveryNote),
     "install-tasks": _col(m.InstallTask), "qc-checks": _col(m.QCCheck), "snags": _col(m.Snag), "documents": _col(m.Document),
     "messages": _col(m.Message), "expenses": _col(m.Expense), "bills": _col(m.SupplierBill),

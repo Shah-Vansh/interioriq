@@ -16,8 +16,23 @@ def _over(x, y, o, pad=0):
     return o["x"] - pad <= x <= o["x"] + o["length"] + pad and o["y"] - pad <= y <= o["y"] + o["width"] + pad
 
 
-def ceiling(L, W, H, objs) -> dict:
+def _shell(L, W, H, shell):
+    """(floor polygon, usable polygon minus columns/pillars, overhead boxes, lowest ceiling) — M41 shapes; None shell = the plain rectangle."""
+    from shapely.geometry import box
+    from app.services import shape as shp
+    if not shell: pg = box(0, 0, L, W); return pg, pg, [], H
+    pg = shp.polygon(L, W, shell.get("shape")); use = pg
+    for s in shell.get("structures") or []:
+        if s["kind"] in ("COLUMN", "PILLAR"): use = use.difference(box(s["x"], s["y"], s["x"] + s["length"], s["y"] + s["width"]))
+    over = [box(s["x"], s["y"], s["x"] + s["length"], s["y"] + s["width"]) for s in shell.get("structures") or [] if s["kind"] in ("BEAM", "CEILING_DROP")]
+    return pg, use, over, shell.get("ceiling_min") or H
+
+
+def ceiling(L, W, H, objs, shell=None) -> dict:
+    from shapely.geometry import Point
     tall = [o for o in objs if (o.get("z") or 0) + (o.get("height") or 0) > TALL]
+    pg, use, over, low = _shell(L, W, H, shell)
+    inner = pg.buffer(-COVE, join_style=2)
     iL, iW = L - 2 * COVE, W - 2 * COVE
     nx, ny = max(1, round(iL / DL_SPACING)), max(1, round(iW / DL_SPACING))
     lights, skipped = [], 0
@@ -25,15 +40,22 @@ def ceiling(L, W, H, objs) -> dict:
         for j in range(ny):
             x, y = COVE + iL * (i + 0.5) / nx, COVE + iW * (j + 0.5) / ny
             if any(_over(x, y, o, 150) for o in tall): skipped += 1; continue
+            if shell and (not inner.contains(Point(x, y)) or not use.buffer(-150).contains(Point(x, y)) or any(b.buffer(150).contains(Point(x, y)) for b in over)):
+                skipped += 1; continue                                   # outside an L-shaped room's outline, on a column, under a beam
             lights.append({"type": "DOWNLIGHT", "x": round(x), "y": round(y), "label": "LED downlight 7W"})
     for o in tall:                                    # a light in front of each tall unit (wardrobe) so the shutters are lit
         wall = _nearest_wall(o, L, W); cx, cy = o["x"] + o["length"] / 2, o["y"] + o["width"] / 2
         off = {"S": (cx, o["y"] + o["width"] + 450), "N": (cx, o["y"] - 450), "W": (o["x"] + o["length"] + 450, cy), "E": (o["x"] - 450, cy)}[wall]
         lights.append({"type": "SPOTLIGHT", "x": round(off[0]), "y": round(off[1]), "label": f"Spot to light {o['name']}"})
     fan = (L / 2, W / 2)
-    if any(_over(fan[0], fan[1], o, 300) for o in tall): fan = None
-    return {"room": {"L": L, "W": W, "H": H}, "false_ceiling_height": H - 300, "cove": COVE,
-            "gypsum_area_m2": round(L * W / 1e6, 2), "cove_strip_m": round(2 * (iL + iW) / 1000, 2),
+    if shell:
+        c = use.representative_point() if not use.contains(Point(*fan)) else Point(*fan)
+        fan = (c.x, c.y) if not any(b.buffer(300).contains(c) for b in over) else None
+    if fan and any(_over(fan[0], fan[1], o, 300) for o in tall): fan = None
+    cove_m = round(inner.length / 1000, 2) if shell and not inner.is_empty else round(2 * (iL + iW) / 1000, 2)
+    return {"room": {"L": L, "W": W, "H": H}, "false_ceiling_height": low - 300, "cove": COVE,
+            "gypsum_area_m2": round(pg.area / 1e6, 2), "cove_strip_m": cove_m,
+            "cove_outline": [[round(x), round(y)] for x, y in list(inner.exterior.coords)[:-1]] if shell and not inner.is_empty and inner.geom_type == "Polygon" else None,
             "lights": lights, "fan": None if fan is None else {"x": round(fan[0]), "y": round(fan[1])},
             "rules": [f"False ceiling 300 mm below the slab, {COVE} mm cove band with LED strip on all walls.",
                       f"Downlights on a ~{DL_SPACING} mm grid inside the cove ({nx}×{ny}); {skipped} skipped above tall units.",
@@ -51,7 +73,10 @@ def electrical(L, W, H, objs, openings=()) -> dict:
     def add(kind, label, x, y, h, note=""):
         n[0] += 1; pts.append({"id": f"E{n[0]}", "type": kind, "label": label, "x": round(x), "y": round(y), "height": h, "note": note})
     door = next((o for o in openings if o["kind"] == "DOOR"), None)
-    if door:
+    if door and door.get("edge") is not None and "x0" in door:           # M41: a door on an inner / angled wall — board 150 mm past its far jamb
+        ux, uy = (door["x1"] - door["x0"]) / door["width"], (door["y1"] - door["y0"]) / door["width"]
+        add("SWITCHBOARD", f"Main switchboard (lights, fan, AC) beside {door['label']}", door["x1"] + ux * 150, door["y1"] + uy * 150, 1200, "")
+    elif door:
         wall_len = L if door["wall"] in ("N", "S") else W
         along = door["offset"] + door["width"] + 150 if door["offset"] + door["width"] + 300 <= wall_len else door["offset"] - 150
         sx, sy = _on_wall(door["wall"], along, L, W)
@@ -122,8 +147,11 @@ def electrical(L, W, H, objs, openings=()) -> dict:
             "assumptions": [p["note"] for p in pts if p["note"].startswith("ASSUMED")]}
 
 
-def elevations(L, W, H, objs, openings=()) -> list[dict]:
-    """Objects within 100 mm of a wall, projected onto it as seen from inside the room (left → right)."""
+def elevations(L, W, H, objs, openings=(), shell=None) -> list[dict]:
+    """Objects within 100 mm of a wall, projected onto it as seen from inside the room (left → right). M41: the ceiling line along the wall
+    (sloped / uneven), beams and ceiling drops meeting the wall and columns against it, and where the wall really is (L-shaped rooms)."""
+    from shapely.geometry import box
+    from app.services import shape as shp
     walls = {"NORTH": L, "EAST": W, "SOUTH": L, "WEST": W}
     out = []
     for name, length in walls.items():
@@ -138,19 +166,43 @@ def elevations(L, W, H, objs, openings=()) -> list[dict]:
             items.append({"name": o["name"], "category": o.get("category"), "x": round(pos), "length": round(ext), "height": round(h), "z": round(z)})
         ops = []
         for op in openings:
-            if op["wall"] != name[0]: continue
+            if op["wall"] != name[0] or op.get("angled"): continue          # M41: inner walls of an L / angled walls aren't on this side
             a, w = op["offset"], op["width"]
             pos = {"NORTH": a, "SOUTH": L - (a + w), "WEST": a, "EAST": W - (a + w)}[name]     # as seen from inside, left → right
             ops.append({"label": op["label"], "kind": op["kind"], "x": round(pos), "width": round(w), "height": round(op["height"]), "sill": round(op.get("sill") or 0)})
-        out.append({"wall": name, "length": round(length), "height": round(H), "items": sorted(items, key=lambda i: i["x"]), "openings": sorted(ops, key=lambda i: i["x"])})
+        e = {"wall": name, "length": round(length), "height": round(H), "items": sorted(items, key=lambda i: i["x"]), "openings": sorted(ops, key=lambda i: i["x"])}
+        if shell:
+            at = {"NORTH": lambda p: (p, W), "SOUTH": lambda p: (L - p, 0), "WEST": lambda p: (0, p), "EAST": lambda p: (L, W - p)}[name]
+            cp = shell.get("ceiling") if (shell.get("ceiling") or {}).get("type") not in (None, "FLAT") else None
+            n = 8 if cp else 1
+            e["ceiling_line"] = [[round(length * k / n), round(shp.ceiling_at(cp, H, L, W, *at(length * k / n)))] for k in range(n + 1)]
+            e["height"] = max(h for _, h in e["ceiling_line"])
+            line = {"NORTH": box(0, W - 60, L, W + 1), "SOUTH": box(0, -1, L, 60), "WEST": box(-1, 0, 60, W), "EAST": box(L - 60, 0, L + 1, W)}[name]
+            def span(b):
+                x0, y0, x1, y1 = b.bounds
+                a, z = {"NORTH": (x0, x1), "SOUTH": (L - x1, L - x0), "WEST": (y0, y1), "EAST": (W - y1, W - y0)}[name]
+                return round(max(0, a)), round(min(length, z) - max(0, a))
+            e["structures"] = []
+            for s in shell.get("structures") or []:
+                b = box(s["x"], s["y"], s["x"] + s["length"], s["y"] + s["width"])
+                if not b.intersects(line): continue
+                x, w = span(b)
+                lo = 0 if s["kind"] in ("COLUMN", "PILLAR") else round(shp.lowest_over(cp, H, L, W, b) - (s.get("depth") or 0))
+                e["structures"].append({"label": s["label"], "kind": s["kind"], "x": x, "width": w, "z": lo})
+            pg = shp.polygon(L, W, shell.get("shape"))
+            seg = pg.exterior.intersection(line)
+            sp = [span(g.envelope) for g in getattr(seg, "geoms", [seg]) if not g.is_empty and g.geom_type in ("LineString", "LinearRing")]
+            e["wall_spans"] = sorted((a, a + w) for a, w in sp if w > 10) if not shp.is_rect(shell.get("shape")) else [(0, round(length))]
+        out.append(e)
     return out
 
 
-def dxf(kind: str, data, L, W, openings=()) -> bytes:
+def dxf(kind: str, data, L, W, openings=(), shell=None) -> bytes:
     from app.services import cad
-    d, msp = cad._doc(); cad._shell(msp, L, W); cad.draw_openings(msp, L, W, openings)
+    d, msp = cad._doc(); cad._shell(msp, L, W, shell); cad.draw_openings(msp, L, W, openings); cad.draw_structures(msp, shell)
     if kind == "ceiling":
-        c = COVE; msp.add_lwpolyline([(c, c), (L - c, c), (L - c, W - c), (c, W - c)], close=True, dxfattribs={"layer": "CEILING"})
+        c = COVE
+        msp.add_lwpolyline(data.get("cove_outline") or [(c, c), (L - c, c), (L - c, W - c), (c, W - c)], close=True, dxfattribs={"layer": "CEILING"})
         for p in data["lights"]:
             msp.add_circle((p["x"], p["y"]), 60 if p["type"] == "DOWNLIGHT" else 80, dxfattribs={"layer": "LIGHTS"})
         if data["fan"]: msp.add_circle((data["fan"]["x"], data["fan"]["y"]), 150, dxfattribs={"layer": "LIGHTS"})

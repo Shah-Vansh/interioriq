@@ -8,21 +8,27 @@ import { DocRow, fitScale, fmtDate } from '@/lib/ops'
 import { ProjectRoomPicker } from '@/components/shared/project-room-picker'
 import { Opening, OpeningsSvg } from '@/components/survey/openings-card'
 import { fitLabel } from '@/lib/plan-label'
+import type { Pt, Structure } from '@/lib/room-shell'
+import { OutlineSvg, StructuresSvg } from '@/components/survey/shell-svg'
 import { Alert, btn, Card, ctl, Empty, Ok, PageHeader, Pill, Table, useAction, useLoad } from '@/components/ui/kit'
 
-interface RoomDims { L: number; W: number; H: number }
+interface RoomDims { L: number; W: number; H: number; outline?: Pt[]; structures?: Structure[] }   // M41: L-shaped / angled rooms, beams + columns
 interface Plan { version: number; is_valid: boolean; room: RoomDims; objects: PlacedObject[]; openings?: Opening[]; validation: { errors: string[]; warnings: string[] } | null }
 interface Ceiling { version: number; room: RoomDims; false_ceiling_height: number; cove: number; gypsum_area_m2: number; cove_strip_m: number; lights: { type: string; x: number; y: number; label: string }[]; fan: { x: number; y: number } | null; rules: string[] }
 interface Electrical { version: number; room: RoomDims; points: { id: string; type: string; label: string; x: number; y: number; height: number; note: string }[]; rules: string[]; assumptions: string[] }
-interface Elevations { version: number; walls: { wall: string; length: number; height: number; items: { name: string; x: number; length: number; height: number; z?: number }[]; openings?: { label: string; kind: string; x: number; width: number; height: number; sill: number }[] }[] }
+interface Elevations { version: number; walls: { wall: string; length: number; height: number; items: { name: string; x: number; length: number; height: number; z?: number }[]; openings?: { label: string; kind: string; x: number; width: number; height: number; sill: number }[]
+  ceiling_line?: [number, number][]; structures?: { label: string; kind: string; x: number; width: number; z: number }[] }[] }
 
 function useRoom() {
   const [sel, setSel] = useState({ projectId: '', roomId: '' })
-  const [versions, setVersions] = useState<DesignVersion[]>([]); const [version, setVersion] = useState<number | null>(null)
+  const [versions, setVersions] = useState<DesignVersion[]>([]); const [picked, setPicked] = useState<{ room: string; v: number | null }>({ room: '', v: null })
   useEffect(() => {
-    setVersions([]); setVersion(null); if (!sel.roomId) return
-    api.get<DesignVersion[]>(`/rooms/${sel.roomId}/designs`).then(v => { setVersions(v); setVersion(v.length ? v[v.length - 1].version : null) }).catch(() => {})
+    setVersions([]); setPicked({ room: sel.roomId, v: null }); if (!sel.roomId) return
+    api.get<DesignVersion[]>(`/rooms/${sel.roomId}/designs`).then(v => { setVersions(v); setPicked({ room: sel.roomId, v: v.length ? v[v.length - 1].version : null }) }).catch(() => {})
   }, [sel.roomId])
+  // a version only counts for the room it was picked in (switching rooms used to ask the new room for the old room's version → 404)
+  const version = picked.room === sel.roomId ? picked.v : null
+  const setVersion = (v: number) => setPicked({ room: sel.roomId, v })
   const picker = <div className="flex gap-2 flex-wrap items-center"><ProjectRoomPicker onChange={s => setSel({ projectId: s.projectId, roomId: s.roomId })} />
     {versions.length > 0 && <select aria-label="Design version" value={version ?? ''} onChange={e => setVersion(Number(e.target.value))} className={ctl}>
       {versions.map(v => <option key={v.id} value={v.version}>v{v.version}{v.is_valid ? '' : ' (has errors)'}</option>)}</select>}</div>
@@ -35,7 +41,10 @@ export function PlanSvg({ room, objects, children, openings = [], w = 760, h = 5
   const sx = (x: number) => f.pad + x * f.s, sy = (y: number) => f.pad + (room.W - y) * f.s
   return (
     <svg viewBox={`0 0 ${f.w} ${f.h}`} className="w-full h-auto bg-white" role="img" aria-label="Floor plan">
-      <rect x={sx(0)} y={sy(room.W)} width={room.L * f.s} height={room.W * f.s} fill="#fafaf9" stroke="#292524" strokeWidth={4} />
+      {room.outline && room.outline.length > 4 ? <><rect x={sx(0)} y={sy(room.W)} width={room.L * f.s} height={room.W * f.s} fill="none" stroke="#e7e5e4" strokeDasharray="4 4" />
+        <OutlineSvg outline={room.outline} sx={sx} sy={sy} fill="#fafaf9" /></>
+        : <rect x={sx(0)} y={sy(room.W)} width={room.L * f.s} height={room.W * f.s} fill="#fafaf9" stroke="#292524" strokeWidth={4} />}
+      {room.structures && <StructuresSvg items={room.structures} sx={sx} sy={sy} />}
       {[...objects].sort((a, b) => (a.z ?? 0) - (b.z ?? 0)).map(o => { const up = (o.z ?? 0) >= 1200, label = up ? '' : fitLabel(o.name, o.length * f.s, o.width * f.s)
         return <g key={o.id} data-plan-object={o.category} data-wall-mounted={up || undefined}><title>{o.name}{up ? ` — fixed ${o.z} mm above the floor` : ''}</title>
         <rect transform={o.rotation ? `rotate(${-o.rotation} ${sx(o.x + o.length / 2)} ${sy(o.y + o.width / 2)})` : undefined} x={sx(o.x)} y={sy(o.y + o.width)} width={o.length * f.s} height={o.width * f.s} fill={up ? '#bae6fd' : '#fde68a'} fillOpacity={up ? 0.35 : 0.55} stroke={up ? '#0369a1' : '#92400e'} strokeWidth={1.2} strokeDasharray={up ? '4 3' : undefined} />
@@ -111,7 +120,12 @@ export function ElevationsView() {
     {!r.version ? <Empty>No saved design for this room yet.</Empty> : data && <div className="grid md:grid-cols-2 gap-4">{data.walls.map(w => { const f = fitScale(w.length, w.height, 600, 300, 30)
       return <Card key={w.wall} title={`${w.wall} wall · ${w.length} × ${w.height} mm`} right={<button onClick={() => dxf(r.roomId, 'elevation', r.version, `elevation-${w.wall.toLowerCase()}.dxf`, `&wall=${w.wall}`, a.setError)} className={btn.small}><Download className="w-3 h-3" />DXF</button>}>
         <svg viewBox={`0 0 ${f.w} ${f.h}`} className="w-full h-auto bg-white" role="img" aria-label={`${w.wall} elevation`} data-wall={w.wall}>
-          <rect x={f.pad} y={f.pad} width={w.length * f.s} height={w.height * f.s} fill="#fafaf9" stroke="#292524" strokeWidth={2.5} />
+          {w.ceiling_line && w.ceiling_line.some(([, h]) => h !== w.height)                // M41: sloped / uneven ceiling along this wall
+            ? <polygon data-ceiling-line points={[[0, 0] as [number, number], [w.length, 0] as [number, number], ...[...w.ceiling_line].reverse()].map(([x, h]) => `${f.pad + x * f.s},${f.pad + (w.height - h) * f.s}`).join(' ')} fill="#fafaf9" stroke="#292524" strokeWidth={2.5} />
+            : <rect x={f.pad} y={f.pad} width={w.length * f.s} height={w.height * f.s} fill="#fafaf9" stroke="#292524" strokeWidth={2.5} />}
+          {(w.structures ?? []).map((st, i) => { const col = st.kind === 'COLUMN' || st.kind === 'PILLAR'; return <g key={'s' + i} data-elev-structure={st.kind}><title>{st.label}</title>
+            <rect x={f.pad + st.x * f.s} y={f.pad} width={st.width * f.s} height={(w.height - st.z) * f.s} fill={col ? '#78716c' : '#e9d5ff'} stroke={col ? '#292524' : '#a21caf'} />
+            <text x={f.pad + (st.x + st.width / 2) * f.s} y={f.pad + (w.height - st.z) * f.s + 11} fontSize={9} textAnchor="middle" fill={col ? '#44403c' : '#a21caf'}>{st.label}{col ? '' : ` u/s ${st.z}`}</text></g> })}
           {w.items.map((it, i) => { const z = it.z ?? 0, label = fitLabel(it.name, it.length * f.s, it.height * f.s); return <g key={i} data-elev-item={it.name}><title>{it.name}</title><rect x={f.pad + it.x * f.s} y={f.pad + (w.height - z - it.height) * f.s} width={it.length * f.s} height={it.height * f.s} fill="#fde68a" fillOpacity={0.6} stroke="#92400e" />
             {label && <text x={f.pad + (it.x + it.length / 2) * f.s} y={f.pad + (w.height - z - it.height / 2) * f.s} fontSize={10} textAnchor="middle" dominantBaseline="middle" fill="#44403c">{label}</text>}</g> })}
           {(w.openings ?? []).map((o, i) => <g key={'o' + i} data-elev-opening={o.kind}><rect x={f.pad + o.x * f.s} y={f.pad + (w.height - o.sill - o.height) * f.s} width={o.width * f.s} height={o.height * f.s}

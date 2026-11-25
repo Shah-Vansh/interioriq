@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import require_roles
 from app.models import models as m
-from app.routers.api import _room_dims, room_openings
+from app.routers.api import _room_dims, room_openings, room_shape
 from app.routers.estimation import BoqParams, READ as EST_READ, _money
 from app.services import boq as boqlib, cad, mep
 
@@ -25,26 +25,27 @@ def _design(db: Session, rid: str, version: int | None):
 @router.get("/rooms/{rid}/drawings/{kind}")
 def drawing(rid: str, kind: str, version: int | None = None, db: Session = Depends(get_db), user: dict = Depends(require_roles(*STAFF))):
     d, L, W, H, objs = _design(db, rid, version)
-    ops = room_openings(db, rid)
-    if kind == "ceiling": data = mep.ceiling(L, W, H, objs)
+    ops = room_openings(db, rid); sh = room_shape(db, rid)
+    if kind == "ceiling": data = mep.ceiling(L, W, H, objs, sh)
     elif kind == "electrical": data = mep.electrical(L, W, H, objs, ops)
-    elif kind == "elevations": data = {"walls": mep.elevations(L, W, H, objs, ops)}
+    elif kind == "elevations": data = {"walls": mep.elevations(L, W, H, objs, ops, sh)}
     elif kind == "plan": data = {"room": {"L": L, "W": W, "H": H}, "objects": objs, "validation": d.design_json.get("validation")}
     else: raise HTTPException(404, "Unknown drawing (plan, ceiling, electrical, elevations)")
-    return {"version": d.version, "is_valid": d.is_valid, "openings": ops, **data}
+    if "room" in data: data["room"] = {**data["room"], "outline": sh["outline"], "structures": sh["structures"]}
+    return {"version": d.version, "is_valid": d.is_valid, "openings": ops, "shell": sh, **data}
 
 
 @router.get("/rooms/{rid}/drawings/{kind}/dxf")
 def drawing_dxf(rid: str, kind: str, version: int | None = None, wall: str = "NORTH", db: Session = Depends(get_db), user: dict = Depends(require_roles(*STAFF))):
-    d, L, W, H, objs = _design(db, rid, version); room = db.get(m.Room, rid)
+    d, L, W, H, objs = _design(db, rid, version); room = db.get(m.Room, rid); sh = room_shape(db, rid)
     if kind in ("ceiling", "electrical"):
         ops = room_openings(db, rid)
-        data = mep.ceiling(L, W, H, objs) if kind == "ceiling" else mep.electrical(L, W, H, objs, ops); body = mep.dxf(kind, data, L, W, ops)
+        data = mep.ceiling(L, W, H, objs, sh) if kind == "ceiling" else mep.electrical(L, W, H, objs, ops); body = mep.dxf(kind, data, L, W, ops, sh)
     elif kind == "elevation":
-        w = next((x for x in mep.elevations(L, W, H, objs, room_openings(db, rid)) if x["wall"] == wall.upper()), None)
+        w = next((x for x in mep.elevations(L, W, H, objs, room_openings(db, rid), sh) if x["wall"] == wall.upper()), None)
         if not w: raise HTTPException(422, "wall must be NORTH, EAST, SOUTH or WEST")
-        body = cad.elevation(room.name, w["length"], H, w["items"], w["openings"])
-    elif kind == "plan": body = cad.furniture_layout(room.name, L, W, objs, room_openings(db, rid))
+        body = cad.elevation(room.name, w["length"], H, w["items"], w["openings"], w)
+    elif kind == "plan": body = cad.furniture_layout(room.name, L, W, objs, room_openings(db, rid), sh)
     else: raise HTTPException(404, "Unknown drawing")
     name = f"{room.name}-{kind}{'-' + wall.lower() if kind == 'elevation' else ''}-v{d.version}.dxf".replace(" ", "_")
     return Response(body, media_type="application/dxf", headers={"Content-Disposition": f'attachment; filename="{name}"'})

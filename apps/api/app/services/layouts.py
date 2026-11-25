@@ -110,7 +110,7 @@ class Plan:
         """o fits: inside the shell, under the ceiling, no overlap, clear of door zones and of every unit's working zone (and its own zone is free)."""
         R = self.room; r = box(o.x, o.y, o.x + o.length, o.y + o.width)
         if o.x < -0.01 or o.y < -0.01 or o.x + o.length > R.length + 0.01 or o.y + o.width > R.width + 0.01: return False
-        if R.ceiling and top(o) > R.ceiling: return False
+        if R.blocked(r, o.z or 0, top(o)): return False          # M41: room outline (L-shaped / angled), sloped ceiling, columns, beams
         for p in self.objs:
             if p.id in ignore: continue
             if area_overlap(p, o) and not stacked_apart(p, o): return False
@@ -119,7 +119,9 @@ class Plan:
                 if dz.intersects(r) and dz.intersection(r).area > 0: return False
         if any(z.blocks(o) for z in self.zones if z.owner not in ignore): return False
         if zone is not None:
-            if not box(0, 0, R.length, R.width).contains(zone.poly): return False
+            if not R.poly().buffer(0.5).contains(zone.poly): return False
+            for st in R.solid():
+                if box(st["x"], st["y"], st["x"] + st["length"], st["y"] + st["width"]).intersection(zone.poly).area > 1: return False
             if any(zone.blocks(p) for p in self.objs if p.id not in ignore): return False
         return True
 

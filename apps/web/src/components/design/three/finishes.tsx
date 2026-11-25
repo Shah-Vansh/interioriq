@@ -30,6 +30,18 @@ function onWall(wall: Wall, u: number, d: number, L: number, W: number): { p: [n
   return { p: [L - d, -u], yaw: -Math.PI / 2 }
 }
 
+/** Things fixed to a wall (feature wall, curtains, art) hide together with that wall when the camera looks in from outside it (dollhouse cut-away). */
+function WallCut({ wall, L, W, H, children }: { wall: Wall; L: number; W: number; H: number; children: React.ReactNode }) {
+  const ref = useRef<THREE.Group>(null)
+  const n = { S: [0, 0, 1], N: [0, 0, -1], W: [-1, 0, 0], E: [1, 0, 0] }[wall], c = { S: [L / 2, 0, 0], N: [L / 2, 0, -W], W: [0, 0, -W / 2], E: [L, 0, -W / 2] }[wall]
+  useFrame(({ camera }) => {
+    if (!ref.current) return
+    const out = (camera.position.x - c[0]) * n[0] + (camera.position.z - c[2]) * n[2] > 0.05
+    ref.current.visible = !(out && camera.position.y < H * 6)
+  })
+  return <group ref={ref}>{children}</group>
+}
+
 /** Flooring material for a concept floor. */
 export function floorMaterial(f: Finishes | null | undefined, L: number, W: number, wet: boolean) {
   const k = f?.floor?.kind, t = f?.floor?.tone
@@ -121,27 +133,27 @@ function CurtainPanel({ w, h, colour }: { w: number; h: number; colour: string }
 export function ConceptDecor({ f, L, W, H, ops, lightsOn }: { f: Finishes; L: number; W: number; H: number
   ops: { wall: string; offset: number; width: number; kind: string; sill: number; height: number }[]; lightsOn: boolean }) {
   return <group>
-    {f.accent && <FeatureWall a={f.accent} L={L} W={W} H={H} ops={ops} />}
+    {f.accent && <WallCut wall={f.accent.wall as Wall} L={L} W={W} H={H}><FeatureWall a={f.accent} L={L} W={W} H={H} ops={ops} /></WallCut>}
     {f.ceiling && <CeilingDesign c={f.ceiling} L={L} W={W} H={H} />}
     {(f.curtains ?? []).map((c, i) => {
       const wall = c.wall as Wall, u0 = c.offset / 1000, u1 = (c.offset + c.width) / 1000, top = (c.sill + c.height) / 1000 + 0.15
       const rod = onWall(wall, (u0 + u1) / 2, 0.12, L, W)
-      if (c.kind === 'BLIND') return <group key={i} position={[rod.p[0], (c.sill + c.height) / 1000 - c.height / 2000 * 0.55, rod.p[1]]} rotation={[0, rod.yaw, 0]}>
-        <mesh castShadow material={M.curtain(c.colour)}><boxGeometry args={[u1 - u0 + 0.06, c.height / 1000 * 0.55, 0.01]} /></mesh></group>
+      if (c.kind === 'BLIND') return <WallCut key={i} wall={wall} L={L} W={W} H={H}><group position={[rod.p[0], (c.sill + c.height) / 1000 - c.height / 2000 * 0.55, rod.p[1]]} rotation={[0, rod.yaw, 0]}>
+        <mesh castShadow material={M.curtain(c.colour)}><boxGeometry args={[u1 - u0 + 0.06, c.height / 1000 * 0.55, 0.01]} /></mesh></group></WallCut>
       const pw = Math.max(0.35, (u1 - u0) * 0.3), h = Math.min(top - 0.02, H - 0.05)
-      return <group key={i} position={[rod.p[0], 0, rod.p[1]]} rotation={[0, rod.yaw, 0]}>
+      return <WallCut key={i} wall={wall} L={L} W={W} H={H}><group position={[rod.p[0], 0, rod.p[1]]} rotation={[0, rod.yaw, 0]}>
         <mesh position={[0, top, 0]} material={M.black()}><boxGeometry args={[u1 - u0 + 0.5, 0.02, 0.02]} /></mesh>
         {[-1, 1].map(s => <group key={s} position={[s * ((u1 - u0) / 2 + 0.25 - pw / 2), h / 2 + 0.02, 0]}><CurtainPanel w={pw} h={h} colour={c.colour} /></group>)}
-      </group>
+      </group></WallCut>
     })}
     {f.rug && <mesh position={[(f.rug.x + f.rug.length / 2) / 1000, 0.004, -(f.rug.y + f.rug.width / 2) / 1000]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow material={M.rug(f.rug.colour)}>
       <planeGeometry args={[f.rug.length / 1000, f.rug.width / 1000]} /></mesh>}
     {(f.art ?? []).map((a, i) => {
       const at = onWall(a.wall as Wall, (a.pos + a.width / 2) / 1000, 0.02, L, W), w = a.width / 1000, h = a.height / 1000
-      return <group key={i} position={[at.p[0], (a.z + a.height / 2) / 1000, at.p[1]]} rotation={[0, at.yaw, 0]}>
+      return <WallCut key={i} wall={a.wall as Wall} L={L} W={W} H={H}><group position={[at.p[0], (a.z + a.height / 2) / 1000, at.p[1]]} rotation={[0, at.yaw, 0]}>
         <mesh castShadow material={M.black()}><boxGeometry args={[w + 0.05, h + 0.05, 0.03]} /></mesh>
         <mesh position={[0, 0, 0.0165]} material={M.art(a.colours)}><planeGeometry args={[w, h]} /></mesh>
-      </group>
+      </group></WallCut>
     })}
     {(f.plants ?? []).map((p, i) => <group key={i} position={[p.x / 1000, 0, -p.y / 1000]}><Plant h={1.2} /></group>)}
     {(f.lights ?? []).map((l, i) => {

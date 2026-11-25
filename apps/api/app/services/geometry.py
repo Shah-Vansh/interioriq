@@ -1,7 +1,9 @@
 """Deterministic geometry. The LLM never performs these calculations."""
 from dataclasses import dataclass, field
 from shapely import affinity
-from shapely.geometry import box
+from shapely.geometry import LineString, Polygon, box
+
+from app.services import shape as shp
 
 @dataclass
 class Obj:
@@ -16,16 +18,56 @@ class Obj:
 class Room:
     length: float; width: float; ceiling: float = 2750
     doors: list = field(default_factory=list)      # legacy: {"x","y","w","swing"} square swing zones
-    openings: list = field(default_factory=list)   # doors/windows: {"kind","wall","offset","width","height","sill","swing","label"}
+    openings: list = field(default_factory=list)   # doors/windows: {"kind","wall","offset","width","height","sill","swing","label"} (+ x0,y0,x1,y1,nx,ny)
+    shape: dict | None = None                      # M41: room outline (shape.py) — None = the L × W rectangle
+    ceiling_profile: dict | None = None            # M41: sloped / uneven ceiling — None = flat at `ceiling`
+    structures: list = field(default_factory=list) # M41: {"kind": BEAM|COLUMN|PILLAR|CEILING_DROP, "x","y","length","width","depth","label"}
+
+    _poly: object = field(default=None, repr=False, compare=False)
+
+    def poly(self):
+        if self._poly is None: self._poly = shp.polygon(self.length, self.width, self.shape)
+        return self._poly
+    def ceiling_over(self, poly) -> float:
+        """Lowest ceiling over a footprint: the profile (flat / sloped / uneven) — beams and drops are checked separately (named errors)."""
+        return shp.lowest_over(self.ceiling_profile, self.ceiling, self.length, self.width, poly) if self.ceiling_profile else self.ceiling
+    def solid(self):  # columns / pillars: floor to ceiling
+        return [s for s in self.structures if s["kind"] in ("COLUMN", "PILLAR")]
+    def overhead(self):  # beams / ceiling drops: hang below the ceiling
+        return [s for s in self.structures if s["kind"] in ("BEAM", "CEILING_DROP")]
+    def underside(self, s: dict) -> float:
+        return self.ceiling_over(box(s["x"], s["y"], s["x"] + s["length"], s["y"] + s["width"])) - (s.get("depth") or 0)
+    def blocked(self, poly, z: float, top_: float) -> str | None:
+        """Why a footprint `poly` occupying heights z..top_ can't be there (outline, ceiling, structures) — None = fine."""
+        if not self.poly().buffer(0.5).contains(poly): return "outside room boundary"
+        if self.ceiling and top_ > self.ceiling_over(poly) + 0.5:
+            return (f"taller than the ceiling here ({top_:.0f} > {self.ceiling_over(poly):.0f}mm, {self.ceiling_profile['type'].lower()} ceiling)" if self.ceiling_profile
+                    else f"taller than ceiling ({top_:.0f} > {self.ceiling:.0f}mm)")
+        for s in self.solid():
+            r = box(s["x"], s["y"], s["x"] + s["length"], s["y"] + s["width"])
+            if r.intersects(poly) and r.intersection(poly).area > 1: return f"hits {s.get('label') or s['kind'].lower()}"
+        for s in self.overhead():
+            r = box(s["x"], s["y"], s["x"] + s["length"], s["y"] + s["width"])
+            if r.intersects(poly) and r.intersection(poly).area > 1 and top_ > self.underside(s) + 0.5:
+                return f"hits {s.get('label') or s['kind'].lower().replace('_', ' ')} (underside {self.underside(s):.0f}mm)"
+        return None
 
 
 APPROACH = 450      # every doorway keeps 450 mm clear in front of it (also sliding / outward doors)
 
 
 def opening_span(room: "Room", o: dict):
-    """(x0, y0, x1, y1) of the opening's footprint ON the wall line, plus the inward normal (dx, dy)."""
+    """(x0, y0, x1, y1) of the opening's footprint ON the wall line, plus the inward normal (dx, dy). Resolved openings (M41: any wall,
+    incl. the inner walls of an L-shaped room and angled walls) carry their own end points."""
+    if "x0" in o: return (o["x0"], o["y0"], o["x1"], o["y1"]), (o["nx"], o["ny"])
     a, w, L, W = o["offset"], o["width"], room.length, room.width
     return {"S": ((a, 0, a + w, 0), (0, 1)), "N": ((a, W, a + w, W), (0, -1)), "W": ((0, a, 0, a + w), (1, 0)), "E": ((L, a, L, a + w), (-1, 0))}[o["wall"]]
+
+
+def strip(span, normal, depth):
+    """The floor strip `depth` mm deep in front of a wall span (works for angled walls too)."""
+    (x0, y0, x1, y1), (dx, dy) = span, normal
+    return Polygon([(x0, y0), (x1, y1), (x1 + dx * depth, y1 + dy * depth), (x0 + dx * depth, y0 + dy * depth)])
 
 
 def door_zones(room: "Room") -> list[tuple[str, object]]:
@@ -33,11 +75,9 @@ def door_zones(room: "Room") -> list[tuple[str, object]]:
     out = []
     for o in room.openings:
         if o["kind"] != "DOOR": continue
-        (x0, y0, x1, y1), (dx, dy) = opening_span(room, o)
+        span, n = opening_span(room, o)
         depth = max(o["width"], APPROACH) if (o.get("swing") or "").startswith("INWARD") else APPROACH
-        if dx == 0: zone = box(x0, min(y0, y0 + dy * depth), x1, max(y0, y0 + dy * depth))
-        else: zone = box(min(x0, x0 + dx * depth), y0, max(x0, x0 + dx * depth), y1)
-        out.append((o.get("label") or "door", zone))
+        out.append((o.get("label") or "door", strip(span, n, depth)))
     return out
 
 MIN_WALKWAY = 600   # mm
@@ -62,12 +102,10 @@ def area_overlap(a, b) -> bool:
 
 def validate(room: Room, objs: list[Obj]) -> dict:
     errors, warnings, flagged = [], [], set()
-    shell = box(0, 0, room.length, room.width)
+    shell = room.poly()
     for o in objs:
-        if not shell.contains(_rect(o)):
-            errors.append(f"{o.name}: outside room boundary"); flagged.add(o.id)
-        if room.ceiling and top(o) > room.ceiling:
-            errors.append(f"{o.name}: taller than ceiling ({top(o):.0f} > {room.ceiling:.0f}mm)"); flagged.add(o.id)
+        why = room.blocked(_rect(o), o.z or 0, top(o))
+        if why: errors.append(f"{o.name}: {why}"); flagged.add(o.id)
     for i, a in enumerate(objs):
         for b in objs[i + 1:]:
             if area_overlap(a, b) and not stacked_apart(a, b):
@@ -77,11 +115,10 @@ def validate(room: Room, objs: list[Obj]) -> dict:
             if (o.z or 0) < DOOR_HEAD and zone.intersects(_rect(o)) and zone.intersection(_rect(o)).area > 0:
                 errors.append(f"{o.name}: blocks {label} (keep its swing / approach clear)"); flagged.add(o.id)
     for wnd in [x for x in room.openings if x["kind"] == "WINDOW"]:     # tall units standing in front of a window
-        (x0, y0, x1, y1), (dx, dy) = opening_span(room, wnd)
-        strip = box(x0, min(y0, y0 + dy * 150), x1, max(y0, y0 + dy * 150)) if dx == 0 else box(min(x0, x0 + dx * 150), y0, max(x0, x0 + dx * 150), y1)
+        sp, n = opening_span(room, wnd); zone = strip(sp, n, 150)
         lo, hi = wnd.get("sill", 0), wnd.get("sill", 0) + wnd.get("height", 1200)
         for o in objs:
-            if (o.z or 0) < hi and top(o) > lo and strip.intersects(_rect(o)) and strip.intersection(_rect(o)).area > 0:
+            if (o.z or 0) < hi and top(o) > lo and zone.intersects(_rect(o)) and zone.intersection(_rect(o)).area > 0:
                 warnings.append(f"{o.name}: covers {wnd.get('label') or 'window'} (" + (f"taller than its {lo:.0f} mm sill)" if not o.z else f"fixed across it, {o.z:.0f}–{top(o):.0f} mm)"))
     for d in room.doors:      # door swing clearance (quarter-circle approximated by its bounding square)
         swing = box(d["x"], d["y"], d["x"] + d["w"], d["y"] + d["w"])
@@ -90,11 +127,13 @@ def validate(room: Room, objs: list[Obj]) -> dict:
                 errors.append(f"{o.name}: blocks door swing"); flagged.add(o.id)
     floor = [o for o in objs if on_floor(o)]      # wall-mounted units don't take floor space
     free = shell
+    for s in room.solid(): free = free.difference(box(s["x"], s["y"], s["x"] + s["length"], s["y"] + s["width"]))
     for o in floor: free = free.difference(_rect(o))
     walk = free.buffer(-MIN_WALKWAY / 2)
     if floor and walk.is_empty:
         warnings.append("No continuous 600mm walkway remains")
-    occ = sum(_rect(o).area for o in floor) / shell.area
+    usable = shell.area - sum(shell.intersection(box(s["x"], s["y"], s["x"] + s["length"], s["y"] + s["width"])).area for s in room.solid())
+    occ = sum(_rect(o).area for o in floor) / max(1.0, usable)
     if occ > 0.6: warnings.append(f"High furniture occupancy ({occ:.0%})")
     if occ > 0.75: errors.append(f"Furniture occupancy {occ:.0%} too high")
     return {"valid": not errors, "errors": errors, "warnings": warnings,

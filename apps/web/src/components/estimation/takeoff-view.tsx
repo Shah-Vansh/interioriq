@@ -24,8 +24,10 @@ export function TakeoffView() {
   useEffect(() => { if (rules) setEdit(Object.fromEntries(rules.map(r => [r.key, { sku: r.sku ?? '', waste_pct: r.waste_pct }]))) }, [rules])
   const save = () => a.run('save', async () => setRules(await api.put<Rule[]>('/takeoff/rules', Object.fromEntries(Object.entries(edit).map(([k, v]) => [k, { sku: v.sku || null, waste_pct: v.waste_pct }])))), 'Take-off rules saved — new BOQs use them')
 
-  const [sel, setSel] = useState({ roomId: '' }); const [version, setVersion] = useState<number | null>(null)
-  useEffect(() => { setVersion(null); if (!sel.roomId) return; api.get<DesignVersion[]>(`/rooms/${sel.roomId}/designs`).then(v => setVersion(v.length ? v[v.length - 1].version : null)).catch(() => {}) }, [sel.roomId])
+  const [sel, setSel] = useState({ roomId: '' }); const [picked, setPicked] = useState<{ room: string; v: number | null }>({ room: '', v: null })
+  useEffect(() => { setPicked({ room: sel.roomId, v: null }); if (!sel.roomId) return; const rid = sel.roomId
+    api.get<DesignVersion[]>(`/rooms/${rid}/designs`).then(v => setPicked({ room: rid, v: v.length ? v[v.length - 1].version : null })).catch(() => {}) }, [sel.roomId])
+  const version = picked.room === sel.roomId ? picked.v : null          // never ask a room for another room's version
   const { data: pv } = useLoad<{ version: number; rows: Row[]; skipped: string[]; lines: number; configured: boolean }>(sel.roomId && version ? `/rooms/${sel.roomId}/designs/${version}/takeoff` : null, [rules])
   return (
     <div className="space-y-5 max-w-[1300px]">

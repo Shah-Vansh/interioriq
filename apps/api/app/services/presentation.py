@@ -67,10 +67,20 @@ def _room_plan(d: Doc, r: dict, objs: list, ops: list, f: dict | None, x0, y0, w
     c.setFillColor(_hex((f or {}).get("floor", {}).get("tone"), "#f5f1ea")); c.setFillAlpha(0.35); c.rect(ox, oy, L * s, W * s, stroke=0, fill=1); c.setFillAlpha(1)
     if f and f.get("rug"):
         g = f["rug"]; c.setFillColor(_hex(g["colour"])); c.setFillAlpha(0.35); c.rect(ox + g["x"] * s, oy + g["y"] * s, g["length"] * s, g["width"] * s, stroke=0, fill=1); c.setFillAlpha(1)
-    c.setStrokeColor(INK); c.setLineWidth(2.2); c.rect(ox, oy, L * s, W * s, stroke=1, fill=0)
+    outline = (r.get("shell") or {}).get("outline")
+    if outline and len(outline) > 4:                                       # M41: L-shaped / angled room
+        p = c.beginPath(); p.moveTo(ox + outline[0][0] * s, oy + outline[0][1] * s)
+        for x, y in outline[1:]: p.lineTo(ox + x * s, oy + y * s)
+        p.close(); c.setStrokeColor(INK); c.setLineWidth(2.2); c.drawPath(p, stroke=1, fill=0)
+    else: c.setStrokeColor(INK); c.setLineWidth(2.2); c.rect(ox, oy, L * s, W * s, stroke=1, fill=0)
+    for st in (r.get("shell") or {}).get("structures") or []:
+        col = st["kind"] in ("COLUMN", "PILLAR"); c.setLineWidth(0.6); c.setStrokeColor(colors.HexColor("#57534e"))
+        c.setFillColor(colors.HexColor("#78716c")); c.setDash() if col else c.setDash(3, 2)
+        c.rect(ox + st["x"] * s, oy + st["y"] * s, st["length"] * s, st["width"] * s, stroke=1, fill=1 if col else 0); c.setDash()
     for o in ops:
         a, wd = o["offset"] * s, o["width"] * s
-        seg = {"S": (ox + a, oy, ox + a + wd, oy), "N": (ox + a, oy + W * s, ox + a + wd, oy + W * s), "W": (ox, oy + a, ox, oy + a + wd), "E": (ox + L * s, oy + a, ox + L * s, oy + a + wd)}[o["wall"]]
+        seg = ((ox + o["x0"] * s, oy + o["y0"] * s, ox + o["x1"] * s, oy + o["y1"] * s) if "x0" in o else
+               {"S": (ox + a, oy, ox + a + wd, oy), "N": (ox + a, oy + W * s, ox + a + wd, oy + W * s), "W": (ox, oy + a, ox, oy + a + wd), "E": (ox + L * s, oy + a, ox + L * s, oy + a + wd)}[o["wall"]])
         c.setStrokeColor(colors.white); c.setLineWidth(3); c.line(*seg)
         c.setStrokeColor(colors.HexColor("#0ea5e9") if o["kind"] == "WINDOW" else ACCENT); c.setLineWidth(1.2); c.line(*seg)
     a = (f or {}).get("accent")
@@ -91,7 +101,9 @@ def _room_plan(d: Doc, r: dict, objs: list, ops: list, f: dict | None, x0, y0, w
 def build(db, pid: str, company: str) -> bytes:
     from app.routers.api import room_openings
     p = db.get(m.Project, pid); client = db.get(m.Client, p.client_id) if p.client_id else None
+    from app.routers.api import room_shape
     rooms = homeplan.boxes(db, pid)
+    for r in rooms: r["shell"] = room_shape(db, r["id"])
     latest = {r["id"]: db.query(m.Design).filter_by(room_id=r["id"]).order_by(m.Design.version.desc()).first() for r in rooms}
     fins = {k: (v.design_json.get("finishes") if v else None) for k, v in latest.items()}
     any_f = next((f for f in fins.values() if f), None)

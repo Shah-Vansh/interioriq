@@ -1,5 +1,6 @@
 'use client'
 import { OpeningsCard } from '@/components/survey/openings-card'
+import { ShellCard } from '@/components/survey/shell-card'
 import { useCallback, useEffect, useState } from 'react'
 import { Plus, CheckCircle2, AlertCircle, ShieldCheck } from 'lucide-react'
 import { api, ApiError, Measurement } from '@/lib/api'
@@ -17,6 +18,7 @@ const BADGE: Record<string, string> = {
 export function RoomsView() {
   const [sel, setSel] = useState({ projectId: '', roomId: '' })
   const [refresh, setRefresh] = useState(0)
+  const [shellVer, setShellVer] = useState(0)
   const [ms, setMs] = useState<Measurement[]>([])
   const [label, setLabel] = useState(LABELS[0]); const [value, setValue] = useState(''); const [source, setSource] = useState('USER_VERIFIED')
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null)
@@ -75,7 +77,8 @@ export function RoomsView() {
                     <td className="px-5 py-3 text-stone-500">{m.confidence}%</td>
                     <td className="px-5 py-3">{m.verified ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <AlertCircle className="w-4 h-4 text-amber-400" />}</td></tr>))}</tbody></table>}
         </div>
-        <OpeningsCard key={sel.roomId + ms.length} roomId={sel.roomId} L={ms.find(m => m.label === 'Length')?.value ?? null} W={ms.find(m => m.label === 'Width')?.value ?? null} />
+        <OpeningsCard key={`${sel.roomId}${ms.length}-${shellVer}`} roomId={sel.roomId} L={ms.find(m => m.label === 'Length')?.value ?? null} W={ms.find(m => m.label === 'Width')?.value ?? null} />
+        <ShellCard key={`s${sel.roomId}${ms.map(m => m.value).join('-')}`} roomId={sel.roomId} L={ms.find(m => m.label === 'Length')?.value ?? null} W={ms.find(m => m.label === 'Width')?.value ?? null} onChanged={() => setShellVer(v => v + 1)} />
       </>)}
     </div>
   )

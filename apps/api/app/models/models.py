@@ -120,6 +120,8 @@ class Room(Base):
     room_type = Column(String, nullable=False)
     plan_x = Column(Float); plan_y = Column(Float)      # M37: south-west corner of the room on the home plan (mm); NULL = not placed yet
     level = Column(Integer)                             # M37: floor (0 = ground)
+    shape = Column(JSON)            # M41: None/RECT | {"type":"CUTS","cuts":{"NE":[l,w],…}} (L/U/T-shaped) | {"type":"POLYGON","points":[[x,y],…]} (angled walls)
+    ceiling_profile = Column(JSON)  # M41: None/FLAT | {"type":"SLOPED","low":mm,"high":mm,"high_wall":"N|E|S|W"} | {"type":"UNEVEN","points":[[x,y,h],…]}
 
 class Measurement(Base):
     """One current value per (room, label). Every value carries provenance."""
@@ -629,5 +631,20 @@ class Opening(Base):
     height_mm = Column(Float, nullable=False)
     sill_mm = Column(Float, nullable=False, default=0)   # windows: height of the sill above the floor; doors: 0
     swing = Column(String)                         # doors: INWARD_LEFT (hinge at the offset end) | INWARD_RIGHT (hinge at offset + width) | OUTWARD | SLIDING
+    label = Column(String)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    edge = Column(Integer)                         # M41: set = the opening is on outline edge #edge (offset from that edge's start); NULL = on the N/E/S/W side
+
+
+class RoomStructure(Base):
+    """Fixed building parts inside a room (M41). Plan box x/y/length/width (mm from the room's south-west corner).
+    COLUMN (against a wall) / PILLAR (free-standing): floor to ceiling. BEAM / CEILING_DROP: hang depth_mm below the ceiling."""
+    __tablename__ = "room_structures"
+    id = Column(String, primary_key=True, default=_id)
+    room_id = Column(String, ForeignKey("rooms.id"), nullable=False, index=True)
+    kind = Column(String, nullable=False)          # BEAM | COLUMN | PILLAR | CEILING_DROP
+    x_mm = Column(Float, nullable=False); y_mm = Column(Float, nullable=False)
+    length_mm = Column(Float, nullable=False); width_mm = Column(Float, nullable=False)
+    depth_mm = Column(Float)                       # beams / ceiling drops: how far below the ceiling the underside is
     label = Column(String)
     created_at = Column(DateTime(timezone=True), default=_now)
