@@ -66,7 +66,7 @@ def generate_boq(rid: str, version: int, params: BoqParams = BoqParams(), db: Se
     inc = takeofflib.configured(db) if inc is None else inc
     p["include_takeoff"] = "true" if inc else "false"
     qd = quote_terms.company_defaults(db); p["payment_schedule"], p["terms"] = qd["schedule"], qd["terms"]      # M26: the quotation keeps its own copy
-    tk = takeofflib.for_design(db, rid, objects) if inc else {"lines": [], "skipped": []}
+    tk = takeofflib.for_design(db, rid, objects, design.design_json.get("finishes")) if inc else {"lines": [], "skipped": []}
     try:
         items, warnings, totals = boqlib.build(objects, {c.sku: c for c in cat}, by_name, p, {s.id: s for s in db.query(m.Supplier)}, tk["lines"])
         warnings = warnings + [f"Take-off: {x}" for x in tk["skipped"]]

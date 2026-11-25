@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils'
 
 interface Slot { slot: string; label: string; categories: string[] }
 interface LayoutMeta { kinds: string[]; room_kind: Record<string, string>; kitchen_shapes: string[]; tiers: string[]; styles: string[]; required: Record<string, Slot[]>; optional: Record<string, Slot[]> }
-const KIND_LABEL: Record<string, string> = { BEDROOM: 'Bedroom', LIVING: 'Living room', DINING: 'Dining room', KITCHEN: 'Kitchen', STUDY: 'Study', BATHROOM: 'Bathroom', UTILITY: 'Utility / laundry' }
+const KIND_LABEL: Record<string, string> = { BEDROOM: 'Bedroom', LIVING: 'Living room', DINING: 'Dining room', KITCHEN: 'Kitchen', STUDY: 'Study', BATHROOM: 'Bathroom', UTILITY: 'Utility / wash area', OUTDOOR: 'Verandah / balcony', FOYER: 'Foyer / passage', POOJA: 'Pooja room', STORE: 'Store room' }
 const SHAPE_LABEL: Record<string, string> = { AUTO: 'Auto (most counter)', STRAIGHT: 'Straight', L: 'L-shaped', PARALLEL: 'Parallel', U: 'U-shaped' }
 const EXAMPLES: Record<string, string[]> = {
   BEDROOM: ['Modern bedroom with walnut wardrobe, warm tones, under 20 lakh', 'Minimal luxury master bedroom, budget 12 lakh'],

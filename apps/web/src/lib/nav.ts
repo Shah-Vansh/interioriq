@@ -24,6 +24,7 @@ export const navigation: NavItem[] = [
     { label:'Documents',    href:'/survey/documents',    icon:'FileText'  },
   ]},
   { label:'Design Studio', icon:'Palette', children:[
+    { label:'Home Design', href:'/design/home', icon:'House' },
     { label:'AI Designer',  href:'/design/ai',        icon:'Sparkles',  badge:'AI',    badgeColor:'blue'  },
     { label:'3D Editor',    href:'/design/3d',        icon:'Box'        },
     { label:'Renders',      href:'/design/renders',   icon:'Image'      },

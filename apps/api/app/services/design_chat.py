@@ -29,7 +29,7 @@ def _slot_words() -> dict:
     """phrase → slot, from the generator's own labels and catalogue categories (longest phrases first)."""
     out = {}
     for slot, cats in layouts.SLOTS.items():
-        for w in {layouts.LABEL[slot].lower(), *cats}: out[w] = slot
+        for w in {layouts.LABEL[slot].lower(), *cats}: out.setdefault(w, slot)        # the first (room-specific) slot keeps a shared word
     out.update({"tv": "tv", "coffee table": "coffee", "bedside": "bedside", "side tables": "bedside", "mirror": "mirror", "shower": "shower",
                 "wall cabinets": "wall_unit", "wall units": "wall_unit", "fillers": "filler", "chair": "desk_chair", "armchairs": "armchair",
                 "bookshelves": "bookshelf", "linen": "linen", "dresser": "dresser", "crockery": "crockery"})

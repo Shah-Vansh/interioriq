@@ -105,7 +105,7 @@ def test_full_flow_from_quotation_to_handover(client):
     assert res["allocated_from_stock"] == [{"sku": j["chair"]["sku"], "qty": 1}] and len(res["created"]) == 1 and not res["unassigned"]
     po = client.get(f"/api/purchase-orders/{res['created'][0]['id']}", headers=h).json()
     lines = {l["sku"]: l for l in po["lines"]}
-    need = cutting.cut_list(1800, 600, 2100)
+    need = cutting.cut_list(1800, 600, 2100, "Wardrobe")
     assert lines[j["chair"]["sku"]]["qty"] == 1
     assert lines[j["ply"]["sku"]]["qty"] == need["sheets"]["18"]["sheets"] and lines[j["back"]["sku"]]["qty"] == need["sheets"]["8"]["sheets"]
     assert lines[j["edge"]["sku"]]["qty"] == int(-(-need["edge_band_m"] // 1))

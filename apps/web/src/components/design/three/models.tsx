@@ -192,8 +192,22 @@ function Dresser({ l, d, h, colour }: P) {
   return <><Cabinet l={l} d={d} h={h} body={finish('wood', colour, '#7a4a24')} front={finish('wood', colour, '#7a4a24')} drawers={3} />
     <B p={[0, h + 0.45, -d / 2 + 0.02]} s={[Math.min(0.7, l * 0.6), 0.8, 0.02]} m={M.mirror()} /></>
 }
-function Plant({ h }: { h: number }) {
+export function Plant({ h }: { h: number }) {
   return <><C p={[0, 0.15, 0]} r={0.14} h={0.3} m={M.pot()} />{[0, 1, 2, 3, 4, 5].map(k => <mesh key={k} position={[Math.cos(k) * 0.1, 0.3 + h * 0.3 + (k % 3) * 0.08, Math.sin(k) * 0.1]} castShadow material={M.leaf()}><sphereGeometry args={[0.13 + (k % 2) * 0.04, 10, 8]} /></mesh>)}</>
+}
+
+function Pooja({ l, d, h, colour }: P) {
+  const w = finish('wood', colour, '#8a5a2b'), base = Math.min(0.85, h * 0.45)
+  return <>
+    <Cabinet l={l} d={d} h={base} body={w} front={w} handle="bar" />
+    <B p={[0, base + 0.02, 0]} s={[l, 0.04, d]} m={M.quartz()} />
+    <B p={[0, (base + h) / 2 + 0.02, -d / 2 + 0.03]} s={[l - 0.04, h - base - 0.04, 0.03]} m={M.wood('#6b3f1c')} />
+    {[-1, 1].map(s => <B key={s} p={[s * (l / 2 - 0.03), (base + h) / 2, 0]} s={[0.06, h - base, d]} m={w} />)}
+    <B p={[0, h - 0.04, 0]} s={[l, 0.08, d]} m={w} />
+    <mesh position={[0, h - 0.22, -d / 2 + 0.12]} castShadow material={M.laminate('#c9a227')}><sphereGeometry args={[Math.min(0.14, l / 6), 20, 10, 0, Math.PI * 2, 0, Math.PI / 2]} /></mesh>
+    <C p={[0, base + 0.1, 0.05]} r={0.03} h={0.04} m={M.laminate('#c9a227')} />
+    <mesh position={[0, base + 0.15, 0.05]} material={M.emissive()}><sphereGeometry args={[0.012, 8, 8]} /></mesh>
+  </>
 }
 
 /** Pick a model from the category (catalogue categories, case-insensitive); unknown categories get a generic cabinet. */
@@ -225,6 +239,11 @@ export function FurnitureModel({ category, l, d, h, colour, name }: P & { catego
   if (c === 'washing machine') return <Washer {...p} />
   if (c === 'utility base' || c === 'utility cabinet') return <Kitchen {...p} kind="base" />
   if (c === 'utility tall' || c === 'linen cabinet' || c === 'broom cabinet') return <Cabinet l={l} d={d} h={h} body={M.laminate('#f2efe9')} front={M.laminate(colour ?? '#e8e2d6')} doors={1} />
-  if (c === 'plant') return <Plant h={h} />
+  if (c === 'plant' || c === 'planter') return <Plant h={h} />
+  if (c === 'outdoor chair') return <Armchair {...p} colour={colour ?? '#b08d57'} />
+  if (c === 'outdoor table') return <CoffeeTable {...p} colour={colour ?? '#8a6a44'} />
+  if (c === 'shoe rack') return <Cabinet l={l} d={d} h={h} body={finish('wood', colour, '#7a5a3a')} front={finish('wood', colour, '#7a5a3a')} doors={Math.max(2, Math.round(l / 0.45))} />
+  if (c === 'console table' || c === 'console') return <><Table {...p} /><B p={[0, h + 0.45, -d / 2 + 0.02]} s={[Math.min(0.7, l * 0.6), 0.8, 0.02]} m={M.mirror()} /></>
+  if (c === 'pooja unit' || c === 'mandir') return <Pooja {...p} />
   return <Cabinet l={l} d={d} h={Math.max(h, 0.05)} body={M.laminate('#f2efe9')} front={finish('laminate', colour, '#d9d2c5')} />
 }

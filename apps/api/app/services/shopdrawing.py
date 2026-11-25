@@ -37,14 +37,26 @@ def layout(category: str | None, L: float, D: float, H: float) -> dict:
     inner_h = CH - 2 * T
     shelf_y = [plinth + T + inner_h * (n + 1) / (shelves + 1) for n in range(shelves)]
     drawers = cutting.DRAWERS if k == "hob" else 0
+    wbays = None
+    if k == "wardrobe":                                     # shelf bays + hanging bays, exactly as the cutting list
+        wl = cutting.wardrobe_layout(L, D, CH); xs = wl["partitions"]; bays = len(wl["bays"]); doors = wl["doors"]; wbays = []
+        for b in wl["bays"]:
+            e = {"x0": b["x0"], "w": b["width"], "kind": b["kind"]}
+            if b["kind"] == "SHELVES": e["ys"] = [T + inner_h * (n + 1) / (b["shelves"] + 1) for n in range(b["shelves"])]
+            else:
+                e["rod_y"] = CH - T - b["rod_from_top"]; e["drawers"] = [(T + i * b["drawer_h"], b["drawer_h"]) for i in range(b["drawers"])]
+                e["small"] = (T + b["drawers"] * b["drawer_h"], b["small_h"], b["small_drawers"]); e["shelf_y"] = T + b["drawers"] * b["drawer_h"] + b["small_h"]
+            wbays.append(e)
+        shelf_y = []; bay_w = wl["bays"][0]["width"]
     notes = []
     if k == "sink": notes.append("Sink unit: no shelf; cut-out in the counter to the sink template; keep the back open for plumbing.")
     if k == "hob": notes.append("Hob unit: 3-drawer stack (heavy-duty runners); hob cut-out in the counter; 16A point behind.")
     if k == "wall": notes.append("Wall unit: hang on a wall rail; handles / profile at the bottom edge.")
-    if kind == "tall": notes.append("Tall unit: fix to the wall at the top (anti-tip).")
+    if kind == "tall" or k == "wardrobe": notes.append("Tall unit: fix to the wall at the top (anti-tip).")
+    if k == "wardrobe": notes.append("Hanging bay: rod 80 mm below the top; 2 drawers + a pair of small drawers on full-extension runners; shelf bays: equal shelves.")
     if plinth: notes.append(f"Floor unit on a {cutting.PLINTH} mm plinth / legs; counter top by others (40 mm, 20 mm front overhang).")
     return {"L": L, "D": D, "H": H, "plinth": plinth, "bays": bays, "partitions": xs, "bay_w": bay_w, "shelves_per_bay": len(shelf_y), "shelf_y": shelf_y,
-            "doors": 0 if drawers else doors, "door_w": L / doors - GAP, "drawers": drawers, "kind": kind, "notes": notes}
+            "doors": 0 if drawers else doors, "door_w": L / doors - GAP, "drawers": drawers, "kind": kind, "notes": notes, "wbays": wbays}
 
 
 # ── PDF ──────────────────────────────────────────────────────────────────────
@@ -120,6 +132,17 @@ def pdf(*, title: str, wo_number: str, project: str, unit_no: int, sku: str | No
     edges = [T] + [px + T for px in g["partitions"]]
     for bx in edges:
         for sy in g["shelf_y"]: box(ix + bx * s, iy + sy * s, g["bay_w"] * s, T * s, fill=colors.HexColor("#e7e5e4"), lw=0.5)
+    for b in g.get("wbays") or []:
+        bx = ix + b["x0"] * s
+        if b["kind"] == "SHELVES":
+            for sy in b["ys"]: box(bx, y0 + sy * s, b["w"] * s, T * s, fill=colors.HexColor("#e7e5e4"), lw=0.5)
+            T_(f"{len(b['ys'])} equal shelves", bx + 2 * mm, y0 + (b["ys"][0] - 60) * s, 6, col=grey)
+        else:
+            c.setLineWidth(1.5); c.line(bx + 2 * mm, y0 + b["rod_y"] * s, bx + b["w"] * s - 2 * mm, y0 + b["rod_y"] * s); T_("hanging rod", bx + 3 * mm, y0 + b["rod_y"] * s - 4 * mm, 6, col=grey)
+            for dy, dh in b["drawers"]: box(bx + 1, y0 + dy * s, b["w"] * s - 2, dh * s - 1, fill=colors.HexColor("#fafaf9"), lw=0.6); T_("DRAWER", bx + b["w"] * s / 2, y0 + (dy + dh / 2) * s - 1 * mm, 6, centre=True)
+            sy, sh, n = b["small"]
+            for k2 in range(n): box(bx + k2 * b["w"] * s / n + 1, y0 + sy * s, b["w"] * s / n - 2, sh * s - 1, fill=colors.HexColor("#fafaf9"), lw=0.6); T_("D", bx + (k2 + 0.5) * b["w"] * s / n, y0 + (sy + sh / 2) * s - 1 * mm, 6, centre=True)
+            box(bx, y0 + b["shelf_y"] * s, b["w"] * s, T * s, fill=colors.HexColor("#e7e5e4"), lw=0.5)
     if g["drawers"]:
         dh = (H - g["plinth"]) / g["drawers"]
         for k in range(1, g["drawers"]): c.setDash(3, 2); c.line(ix + T * s, y0 + k * dh * s, ix + (L - T) * s, y0 + k * dh * s); c.setDash()

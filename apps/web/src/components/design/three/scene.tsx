@@ -7,6 +7,7 @@ import { useFrame } from '@react-three/fiber'
 import { ContactShadows, Environment, Lightformer, Sky } from '@react-three/drei'
 import * as THREE from 'three'
 import { M } from './materials'
+import { ConceptDecor, Finishes, floorMaterial } from './finishes'
 
 export interface Opening3 { id: string; kind: string; wall: string; offset: number; width: number; height: number; sill: number }
 const WALL_T = 0.12
@@ -43,7 +44,7 @@ export function facing(o: { x: number; y: number; length: number; width: number 
   return { yaw: best.yaw, l: best.along ? o.length : o.width, d: best.along ? o.width : o.length, wall: best.wall }
 }
 
-function WallWithOpenings({ wall, L, W, H, ops, cutaway, tiles }: { wall: 'S' | 'N' | 'W' | 'E'; L: number; W: number; H: number; ops: Opening3[]; cutaway: boolean; tiles: boolean }) {
+function WallWithOpenings({ wall, L, W, H, ops, cutaway, tiles, colour }: { wall: 'S' | 'N' | 'W' | 'E'; L: number; W: number; H: number; ops: Opening3[]; cutaway: boolean; tiles: boolean; colour?: string }) {
   const len = wall === 'S' || wall === 'N' ? L : W
   const group = useRef<THREE.Group>(null)
   const normal = useMemo(() => ({ S: new THREE.Vector3(0, 0, 1), N: new THREE.Vector3(0, 0, -1), W: new THREE.Vector3(-1, 0, 0), E: new THREE.Vector3(1, 0, 0) }[wall]), [wall])
@@ -70,7 +71,7 @@ function WallWithOpenings({ wall, L, W, H, ops, cutaway, tiles }: { wall: 'S' | 
   if (cur < len) segs.push({ a: cur, b: len, y0: 0, y1: H })
   // local frame: along the wall = +X from the wall's start, the wall's inner face at z=0, outward = +Z
   const place = { S: { p: [0, 0, 0] as const, r: 0 }, N: { p: [L, 0, -W] as const, r: Math.PI }, W: { p: [0, 0, -W] as const, r: -Math.PI / 2 }, E: { p: [L, 0, 0] as const, r: Math.PI / 2 } }[wall]
-  const wallMat = tiles ? M.tiles('#ece8e1', len, H) : M.wall()
+  const wallMat = tiles ? M.tiles('#ece8e1', len, H) : M.wall(colour)
   return <group ref={group} position={place.p as unknown as [number, number, number]} rotation={[0, place.r, 0]}>
     {segs.map((s, i) => <mesh key={i} position={[(s.a + s.b) / 2, (s.y0 + s.y1) / 2, WALL_T / 2]} castShadow receiveShadow material={wallMat}><boxGeometry args={[s.b - s.a, s.y1 - s.y0, WALL_T]} /></mesh>)}
     {mine.filter(o => o.kind === 'WINDOW').map((o, i) => <group key={`w${i}`}>
@@ -131,12 +132,15 @@ export function Lighting({ L, W, H, hour }: { L: number; W: number; H: number; h
 }
 
 /** The room itself: floor, walls with openings, skirting, ceiling + downlights. Wet rooms get tiles. */
-export function RealisticRoom({ L, W, H, ops, hour, lightsOn, wet }: { L: number; W: number; H: number; ops: Opening3[]; hour: number; lightsOn: boolean; wet: boolean }) {
-  const floor = wet ? M.tiles('#d6d1c8', L, W) : M.floor('#b88a5a', L, W)
+export function RealisticRoom({ L, W, H, ops, hour, lightsOn, wet, finishes, ground = true }: { L: number; W: number; H: number; ops: Opening3[]; hour: number; lightsOn: boolean; wet: boolean
+  finishes?: Finishes | null; ground?: boolean }) {
+  const floor = floorMaterial(finishes, L, W, wet)
+  const lit = lightsOn || isNight(hour)
   return <group>
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[L / 2, 0, -W / 2]} receiveShadow material={floor}><planeGeometry args={[L, W]} /></mesh>
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[L / 2, -0.01, -W / 2]} receiveShadow material={M.laminate('#d9d4cb')}><planeGeometry args={[L + 12, W + 12]} /></mesh>
-    {(['S', 'N', 'W', 'E'] as const).map(w => <WallWithOpenings key={w} wall={w} L={L} W={W} H={H} ops={ops} cutaway tiles={wet} />)}
-    <Ceiling L={L} W={W} H={H} lightsOn={lightsOn || isNight(hour)} />
+    {ground && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[L / 2, -0.01, -W / 2]} receiveShadow material={M.laminate('#d9d4cb')}><planeGeometry args={[L + 12, W + 12]} /></mesh>}
+    {(['S', 'N', 'W', 'E'] as const).map(w => <WallWithOpenings key={w} wall={w} L={L} W={W} H={H} ops={ops} cutaway tiles={wet && !finishes?.walls} colour={finishes?.walls?.colour} />)}
+    <Ceiling L={L} W={W} H={H} lightsOn={lit} />
+    {finishes && <ConceptDecor f={finishes} L={L} W={W} H={H} ops={ops} lightsOn={lit} />}
   </group>
 }

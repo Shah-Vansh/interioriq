@@ -118,6 +118,8 @@ class Room(Base):
     project_id = Column(String, ForeignKey("projects.id"), nullable=False)
     name = Column(String, nullable=False)
     room_type = Column(String, nullable=False)
+    plan_x = Column(Float); plan_y = Column(Float)      # M37: south-west corner of the room on the home plan (mm); NULL = not placed yet
+    level = Column(Integer)                             # M37: floor (0 = ground)
 
 class Measurement(Base):
     """One current value per (room, label). Every value carries provenance."""

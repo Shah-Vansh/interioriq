@@ -73,7 +73,15 @@ SEED_FURNITURE = [
     ("WM-FL-001", "Washing Machine space (front-loading)", "Washing Machine", 600, 600, 850, 0, 10),
     ("UTB-900-001", "Utility Base Cabinet 900", "Utility Base", 900, 560, 850, 19000, 8),
     ("UTT-600-001", "Utility Tall Cabinet 600 (brooms)", "Utility Tall", 600, 560, 2100, 27000, 4),
-    ("UTW-900-001", "Utility Wall Cabinet 900", "Utility Wall", 900, 350, 700, 13000, 8, None, 1450)]
+    ("UTW-900-001", "Utility Wall Cabinet 900", "Utility Wall", 900, 350, 700, 13000, 8, None, 1450),
+    # M37: verandah / foyer / pooja / store
+    ("OCH-CANE-001", "Cane Lounge Chair", "Outdoor Chair", 680, 720, 820, 14500, 4, "traditional, boho"),
+    ("OTB-TEAK-001", "Outdoor Side Table — Teak", "Outdoor Table", 550, 550, 450, 7800, 4, "traditional"),
+    ("PLN-LRG-001", "Large Planter with Areca Palm", "Planter", 450, 450, 1400, 4200, 4, "boho, scandinavian"),
+    ("SHR-900-001", "Shoe Rack 900 with seat", "Shoe Rack", 900, 350, 1000, 16500, 4, "modern"),
+    ("CON-WLT-001", "Console Table — Walnut", "Console Table", 1100, 350, 780, 18500, 4, "modern, luxury"),
+    ("PJU-900-001", "Pooja Unit 900 with drawers", "Pooja Unit", 900, 450, 1800, 42000, 4, "traditional"),
+    ("STR-900-001", "Storage Unit 900 (store room)", "Storage", 900, 450, 2100, 24000, 4, None)]
 
 def seed():
     if settings.AUTO_MIGRATE:
@@ -127,12 +135,14 @@ async def lifespan(app: FastAPI):
 from app.routers.team import router as team_router
 from app.routers.backups import router as backups_router
 from app.routers.exports import router as exports_router
+from app.routers.homeplan import router as homeplan_router
+from app.routers.concept import router as concept_router
 from app.services import access, jobs
 app = FastAPI(title="InteriorIQ API", version="0.2.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.ALLOWED_ORIGINS, allow_origin_regex=settings.ALLOWED_ORIGIN_REGEX, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 # M22: every route passes the project-access guard (a no-op unless 'Limit staff to their projects' is on)
 for _r in (router, documents_router, estimation_router, crm_router, catalogue_router, operations_router, insights_router, admin_router, portal_router, drawings_router,
-           invoices_router, notifications_router, profit_router, payables_router, takeoff_router, openings_router, team_router, backups_router, exports_router):
+           invoices_router, notifications_router, profit_router, payables_router, takeoff_router, openings_router, team_router, backups_router, exports_router, homeplan_router, concept_router):
     app.include_router(_r, prefix="/api", dependencies=[Depends(access.guard)])
 
 @app.exception_handler(IntegrityError)

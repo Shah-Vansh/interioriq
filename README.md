@@ -7,7 +7,11 @@ manufacturing → delivery → installation → QC → handover, on real data.
 - CRM with lead follow-ups (email + WhatsApp reminders), client portal, project teams and role-based access
 - Room survey with OCR of drawings (PDF text layer / RapidOCR), doors & windows
 - Rule-based layouts for bedroom, living, dining, kitchen, study, bathroom and utility, validated with Shapely; a design chat adjusts them
-- 3D editor (React Three Fiber) with free rotation and colours, DXF drawings (plan, ceiling, electrical, elevations)
+- Whole-home design: every room type (verandah, foyer, living, dining, kitchen, bedrooms, bathrooms, wash area, pooja, store), one style for
+  the whole home (feature walls, ceilings, floors, curtains, decor), rooms on one house plan, the whole home in 3D, a design presentation PDF
+- Realistic 3D editor (React Three Fiber) with free rotation, colours, sunlight and shadows; DXF drawings (plan, ceiling, electrical, elevations)
+- Working drawings for the site team (A3, feet-inches): light detail, room plans and elevations, bed, wardrobe and kitchen details;
+  shop drawings and cutting lists per work order
 - Catalogue with photos, Excel import, price/stock ledgers and per-supplier quotes; BOQ + quotation PDFs (₹, Gujarati/Hindi, editable payment terms);
   optional GST invoices + credit notes, purchase orders, payables, profitability, Tally export
 - Decimal-only money on the server; append-only design history; Alembic migrations; optional Celery workers

@@ -63,7 +63,7 @@ def preview(bid: str, params: BoqParams, db: Session = Depends(get_db), user: di
     p = boqlib.normalize_params(raw, bool(companylib.get(db)["gst_enabled"]))
     from app.services import takeoff as takeofflib
     inc = (b.params.get("include_takeoff") == "true") if inc is None else inc
-    tk = takeofflib.for_design(db, b.room_id, design.design_json.get("objects", [])) if inc else {"lines": [], "skipped": []}
+    tk = takeofflib.for_design(db, b.room_id, design.design_json.get("objects", []), design.design_json.get("finishes")) if inc else {"lines": [], "skipped": []}
     try:
         items, warnings, totals = boqlib.build(design.design_json.get("objects", []), {c.sku: c for c in cat}, by_name, p, {s.id: s for s in db.query(m.Supplier)}, tk["lines"])
     except boqlib.BoqError as e:

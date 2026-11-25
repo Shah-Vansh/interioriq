@@ -51,6 +51,8 @@ function Portal() {
           <Card title="Deliveries">{!o.deliveries?.length ? <Empty>Nothing delivered yet.</Empty> : <ul className="text-xs space-y-2">{o.deliveries.map(d => <li key={d.dn_number}><b>{d.dn_number}</b> <Pill s={d.status} /> {fmtDate(d.delivered_at ?? d.scheduled_on)}
             <p className="text-stone-500">{d.lines.map(l => `${l.description} × ${l.qty}`).join(', ')}</p></li>)}</ul>}</Card>
         </div>
+        <Card title="Your home design"><p className="text-sm text-stone-600">The design presentation: style, colours, plans and the design of every room.</p>
+          <button onClick={() => downloadFile(`/portal/projects/${o.id}/presentation.pdf`, 'design-presentation.pdf').catch(e => a.setError(e.message))} className={btn.ghost + ' mt-2'} aria-label="Download design presentation"><Download className="w-3.5 h-3.5" />Design presentation (PDF)</button></Card>
         {o.handover && <Card title="Handover"><p className="text-sm text-green-800">Handed over to {o.handover.received_by} on {fmtDate(o.handover.handed_over_on)} · warranty {o.handover.warranty_months} months.</p>
           <button onClick={() => downloadFile(`/portal/projects/${o.id}/handover.pdf`, 'handover-certificate.pdf').catch(e => a.setError(e.message))} className={btn.ghost + ' mt-2'}><Download className="w-3.5 h-3.5" />Handover certificate</button></Card>}
         <Card title="Updates">{!o.timeline?.length ? <Empty>No updates yet.</Empty> : <ul className="divide-y divide-stone-50 text-sm" data-testid="portal-timeline">{o.timeline.map((e, i) => <li key={i} className="py-1.5 flex justify-between gap-3"><span>{e.text}</span><span className="text-[11px] text-stone-400 whitespace-nowrap">{fmtDate(e.created_at)}</span></li>)}</ul>}</Card>

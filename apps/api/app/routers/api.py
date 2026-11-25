@@ -114,7 +114,7 @@ def create_room(pid: str, b: RoomIn, db: Session = Depends(get_db), user: dict =
 
 @router.get("/projects/{pid}/rooms", tags=["Survey"])
 def list_rooms(pid: str, db: Session = Depends(get_db), user: dict = Depends(current_user)):
-    return [{"id": r.id, "name": r.name, "room_type": r.room_type} for r in db.query(m.Room).filter_by(project_id=pid)]
+    return [{"id": r.id, "name": r.name, "room_type": r.room_type, "plan_x": r.plan_x, "plan_y": r.plan_y, "level": r.level or 0} for r in db.query(m.Room).filter_by(project_id=pid)]
 
 @router.get("/rooms/{rid}/measurements", tags=["Survey"])
 def list_measurements(rid: str, db: Session = Depends(get_db), user: dict = Depends(current_user)):
@@ -290,6 +290,7 @@ class DesignBody(BaseModel):
 
 class SaveDesign(DesignBody):
     tier: str = "Balanced"
+    finishes: dict | None = None             # M38: design concept; omitted → the room's current concept is kept
 
 def _to_objs(items: list[ObjectIn]) -> list[geometry.Obj]:
     return [geometry.Obj(**{k: v for k, v in o.model_dump().items() if k in geometry.Obj.__dataclass_fields__}) for o in items]
@@ -305,8 +306,13 @@ def save_design(rid: str, b: SaveDesign, db: Session = Depends(get_db), user: di
     L, W, H = _room_dims(db, rid)
     check = geometry.validate(_geo(db, rid, L, W, H), _to_objs(b.objects))
     nxt = (db.query(func.max(m.Design.version)).filter_by(room_id=rid).scalar() or 0) + 1   # never overwrite history
-    d = m.Design(room_id=rid, version=nxt, tier=b.tier, design_json={"objects": [o.model_dump() for o in b.objects], "validation": check},
-                 is_valid=check["valid"], created_by=user["sub"])
+    fin = b.finishes
+    if fin is None:
+        prev = db.query(m.Design).filter_by(room_id=rid).order_by(m.Design.version.desc()).first()
+        fin = prev.design_json.get("finishes") if prev else None
+    dj = {"objects": [o.model_dump() for o in b.objects], "validation": check}
+    if fin: dj["finishes"] = fin
+    d = m.Design(room_id=rid, version=nxt, tier=b.tier, design_json=dj, is_valid=check["valid"], created_by=user["sub"])
     db.add(d)
     room = db.get(m.Room, rid); proj = db.get(m.Project, room.project_id)
     flow.event(db, proj.id, "DESIGN", f"{room.name}: design v{nxt} saved ({'valid' if check['valid'] else 'has errors'})", user)
@@ -315,7 +321,7 @@ def save_design(rid: str, b: SaveDesign, db: Session = Depends(get_db), user: di
 
 def _design_out(d: m.Design) -> dict:
     return {"id": d.id, "version": d.version, "tier": d.tier, "is_valid": d.is_valid, "status": d.approval_status,
-            "objects": d.design_json["objects"], "validation": d.design_json.get("validation")}
+            "objects": d.design_json["objects"], "validation": d.design_json.get("validation"), "finishes": d.design_json.get("finishes")}
 
 @router.get("/rooms/{rid}/designs/latest", tags=["Design"])
 def latest_design(rid: str, db: Session = Depends(get_db), user: dict = Depends(current_user)):

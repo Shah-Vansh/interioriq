@@ -101,6 +101,7 @@ export function Editor3D() {
   const [realistic, setRealistic] = useState(true)          // real furniture shapes, walls, sun, shadows (off = fast boxes)
   const [hour, setHour] = useState(10.5)
   const [lightsOn, setLightsOn] = useState(false)
+  const [finishes, setFinishes] = useState<DesignDetail['finishes']>(null)   // the room's design concept (drawn in Realistic view)
   const canvasWrap = useRef<HTMLDivElement>(null)
   const [ops, setOps] = useState<{ id: string; kind: string; wall: string; offset: number; width: number; height: number; sill: number }[]>([])
   useEffect(() => { setOps([]); if (sel.roomId) api.get<{ openings: typeof ops }>(`/rooms/${sel.roomId}/openings`).then(r => setOps(r.openings)).catch(() => {}) }, [sel.roomId])
@@ -130,7 +131,7 @@ export function Editor3D() {
 
   // ── load room: dimensions, versions, latest design, catalogue ──
   const loadRoom = useCallback(async () => {
-    setDims(null); setHist(createHistory([])); setSavedJson('[]'); setSelectedId(null); setVal(null); setVersions([]); setLoadedVersion(null); setMsg(null)
+    setDims(null); setHist(createHistory([])); setSavedJson('[]'); setSelectedId(null); setVal(null); setVersions([]); setLoadedVersion(null); setMsg(null); setFinishes(null)
     if (!sel.roomId) return
     try {
       const [ms, vs] = await Promise.all([api.get<Measurement[]>(`/rooms/${sel.roomId}/measurements`), api.get<DesignVersion[]>(`/rooms/${sel.roomId}/designs`)])
@@ -140,7 +141,7 @@ export function Editor3D() {
       setDims({ L, W, H: get('ceiling') ?? 2750 }); setVersions(vs)
       if (vs.length) {
         const d = await api.get<DesignDetail>(`/rooms/${sel.roomId}/designs/latest`)
-        setHist(createHistory(d.objects)); setSavedJson(JSON.stringify(d.objects)); setLoadedVersion(d.version)
+        setHist(createHistory(d.objects)); setSavedJson(JSON.stringify(d.objects)); setLoadedVersion(d.version); setFinishes(d.finishes ?? null)
       }
     } catch (e) { setMsg({ ok: false, text: e instanceof ApiError ? e.message : 'Failed to load room' }) }
   }, [sel.roomId])
@@ -234,7 +235,7 @@ export function Editor3D() {
     if (dirty && !confirm('Discard unsaved changes and load this version?')) return
     try {
       const d = await api.get<DesignDetail>(`/rooms/${sel.roomId}/designs/${v}`)
-      setHist(createHistory(d.objects)); setSavedJson(JSON.stringify(d.objects)); setLoadedVersion(d.version); setSelectedId(null); setMsg(null)
+      setHist(createHistory(d.objects)); setSavedJson(JSON.stringify(d.objects)); setLoadedVersion(d.version); setSelectedId(null); setMsg(null); setFinishes(d.finishes ?? null)
     } catch (e) { setMsg({ ok: false, text: e instanceof ApiError ? e.message : 'Load failed' }) }
   }
   const snapshot = async () => {
@@ -318,7 +319,7 @@ export function Editor3D() {
             <Canvas key={realistic ? 'real' : 'quick'} shadows={realistic ? 'soft' : false} dpr={[1, 2]} gl={{ preserveDrawingBuffer: true, antialias: true }} camera={{ fov: 45, near: 0.1, far: 100 }} onPointerMissed={() => setSelectedId(null)}>
               {realistic ? <>
                 <Lighting L={dims.L / 1000} W={dims.W / 1000} H={dims.H / 1000} hour={hour} />
-                <RealisticRoom L={dims.L / 1000} W={dims.W / 1000} H={dims.H / 1000} ops={ops} hour={hour} lightsOn={lightsOn} wet={['BATHROOM', 'UTILITY', 'KITCHEN'].includes(sel.roomType)} />
+                <RealisticRoom L={dims.L / 1000} W={dims.W / 1000} H={dims.H / 1000} ops={ops} hour={hour} lightsOn={lightsOn} wet={['BATHROOM', 'UTILITY', 'KITCHEN', 'WASH_AREA'].includes(sel.roomType)} finishes={finishes} />
               </> : <>
                 <color attach="background" args={['#f0ece6']} />
                 <ambientLight intensity={0.8} /><directionalLight position={[6, 10, 4]} intensity={1.1} /><hemisphereLight args={['#ffffff', '#d6d3d1', 0.4]} />

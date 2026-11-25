@@ -108,7 +108,7 @@ export async function downloadFile(path: string, filename: string) {
   const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url)
 }
 
-export interface DesignDetail extends DesignVersion { objects: PlacedObject[]; validation: Validation | null }
+export interface DesignDetail extends DesignVersion { objects: PlacedObject[]; validation: Validation | null; finishes?: import('@/components/design/three/finishes').Finishes | null }
 export interface CatalogueItem { sku: string; name: string; category: string; length_mm: number; width_mm: number; height_mm: number; price: number; stock: number; mount_mm?: number | null; style?: string | null }
 
 export async function fetchBlob(path: string): Promise<Blob> {

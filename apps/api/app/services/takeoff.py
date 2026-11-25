@@ -28,7 +28,33 @@ KEYS = {
     "WALL_PAINT": ("Wall paint (walls not hidden by tall units)", "sq.m", 10, ["MATERIAL"]),
     "FLOORING": ("Flooring", "sq.m", 8, ["MATERIAL"]),
     "SKIRTING": ("Skirting", "r.m", 5, ["MATERIAL"]),
+    # M38 design concept (only when a room has a concept; its ceiling / flooring then replace the generic lines above)
+    "ACCENT_FLUTED_WOOD": ("Feature wall: fluted wood panelling", "sq.m", 8, ["MATERIAL"]),
+    "ACCENT_WALLPAPER": ("Feature wall: wallpaper", "sq.m", 10, ["MATERIAL"]),
+    "ACCENT_STONE": ("Feature wall: stone cladding", "sq.m", 8, ["MATERIAL"]),
+    "ACCENT_PANELLING": ("Feature wall: moulded panelling", "sq.m", 8, ["MATERIAL"]),
+    "ACCENT_PAINT": ("Feature wall: accent paint", "sq.m", 10, ["MATERIAL"]),
+    "ACCENT_TILE": ("Feature wall: feature tiles", "sq.m", 8, ["MATERIAL"]),
+    "ACCENT_JAALI": ("Feature wall: backlit jaali", "sq.m", 5, ["MATERIAL"]),
+    "ACCENT_BRICK": ("Feature wall: brick cladding", "sq.m", 8, ["MATERIAL"]),
+    "CEILING_GRID": ("Grid ceiling (wet area)", "sq.m", 5, ["MATERIAL"]),
+    "CEILING_RAFTER": ("Wooden rafter ceiling", "sq.m", 5, ["MATERIAL"]),
+    "FLOOR_WOOD": ("Flooring: wood / laminate", "sq.m", 8, ["MATERIAL"]),
+    "FLOOR_MARBLE": ("Flooring: marble / large tiles", "sq.m", 8, ["MATERIAL"]),
+    "FLOOR_TILE": ("Flooring: anti-skid tiles", "sq.m", 8, ["MATERIAL"]),
+    "FLOOR_TERRAZZO": ("Flooring: terrazzo", "sq.m", 5, ["MATERIAL"]),
+    "FLOOR_CONCRETE": ("Flooring: polished concrete", "sq.m", 5, ["MATERIAL"]),
+    "FLOOR_STONE": ("Flooring: natural stone", "sq.m", 8, ["MATERIAL"]),
+    "CURTAIN": ("Curtains (window width + 300 mm)", "r.m", 0, ["MATERIAL", "HARDWARE"]),
+    "BLIND": ("Blinds (wet rooms)", "No.", 0, ["MATERIAL"]),
+    "RUG": ("Rugs", "No.", 0, ["FURNITURE", "MATERIAL"]),
+    "WALL_ART": ("Wall art", "No.", 0, ["FURNITURE", "MATERIAL"]),
+    "DECOR_PLANT": ("Decor plants", "No.", 0, ["FURNITURE", "MATERIAL"]),
+    "PENDANT": ("Decorative pendant lights", "No.", 0, ["LIGHTING"]),
+    "CHANDELIER": ("Chandelier", "No.", 0, ["LIGHTING"]),
 }
+CONCEPT_KEY = {"concept_cove_led_rm": "COVE_STRIP", "rafter_ceiling_sqm": "CEILING_RAFTER", "curtain_rm": "CURTAIN", "blind_no": "BLIND", "rug_no": "RUG",
+               "wall_art_no": "WALL_ART", "decor_plant_no": "DECOR_PLANT", "pendant_light_no": "PENDANT", "chandelier_no": "CHANDELIER"}
 SQFT_PER_SQM, FT_PER_M = Decimal("10.7639104"), Decimal("3.2808399")
 COUNT_UNITS = {"No.", "set", "box", "sheet", "kg", "litre"}
 
@@ -52,8 +78,9 @@ def _touching(o, L, W):
     return out
 
 
-def quantities(L: float, W: float, H: float, objs: list[dict], openings=()) -> dict:
-    """Measured quantities (before waste), each with the basis it came from."""
+def quantities(L: float, W: float, H: float, objs: list[dict], openings=(), finishes: dict | None = None) -> dict:
+    """Measured quantities (before waste), each with the basis it came from. With a design concept (finishes) its ceiling, flooring,
+    feature wall and decor quantities are used; the feature wall's area is taken off the wall paint."""
     c = mep.ceiling(L, W, H, objs); e = mep.electrical(L, W, H, objs, openings)
     open_area = sum(o["width"] * o["height"] for o in openings); doorways = sum(o["width"] for o in openings if o["kind"] == "DOOR")
     pts = {k: sum(1 for p in e["points"] if p["type"] == k) for k in ("SOCKET", "SWITCH", "SWITCHBOARD", "AC", "LIGHT")}
@@ -77,6 +104,21 @@ def quantities(L: float, W: float, H: float, objs: list[dict], openings=()) -> d
         "SKIRTING": (round(max(0.0, perim - hidden_run - doorways) / 1000, 2), f"perimeter {perim / 1000:.2f} m − {hidden_run / 1000:.2f} m behind tall units"
                                                                          + (f" − {doorways / 1000:.2f} m doorways" if doorways else "")),
     }
+    if finishes:
+        from app.services import concept
+        cq = concept.quantities(finishes); c2 = finishes.get("ceiling") or {}
+        q["CEILING_GYPSUM"] = (c2.get("gypsum_sqm", 0) if c2.get("type") in ("COVE", "ISLAND") else 0, f"concept: {c2.get('label', 'ceiling')}")
+        q["COVE_STRIP"] = (c2.get("cove_rm", 0), f"concept: {c2.get('label', 'ceiling')}")
+        if c2.get("type") == "GRID": q["CEILING_GRID"] = (round(L * W / 1e6, 2), "concept: grid ceiling, full room")
+        fl = finishes.get("floor") or {}
+        if fl.get("kind"): q["FLOORING"] = (0, "replaced by the concept's flooring"); q[f"FLOOR_{fl['kind']}"] = (fl.get("area_sqm", round(L * W / 1e6, 2)), f"concept: {fl.get('label', '')}")
+        a = finishes.get("accent")
+        if a and a.get("area_sqm"):
+            k = f"ACCENT_{a['type']}"
+            if k in KEYS: q[k] = (a["area_sqm"], f"concept: {a['wall']} wall {a['from']}–{a['to']} mm × {a['height']} mm")
+            pv, pb = q["WALL_PAINT"]; q["WALL_PAINT"] = (round(max(0.0, pv - a["area_sqm"]), 2), pb + f" − {a['area_sqm']} sq.m feature wall")
+        for ck, key in CONCEPT_KEY.items():
+            if ck in cq and key not in ("COVE_STRIP",): q[key] = (cq[ck], "concept")
     return {k: {"label": KEYS[k][0], "qty": D(v), "unit": KEYS[k][1], "basis": b} for k, (v, b) in q.items()}
 
 
@@ -104,9 +146,9 @@ def rules(db: Session) -> dict:
 def configured(db: Session) -> bool: return any(r["sku"] for r in rules(db).values())
 
 
-def plan(db: Session, L: float, W: float, H: float, objs: list[dict], openings=()) -> dict:
+def plan(db: Session, L: float, W: float, H: float, objs: list[dict], openings=(), finishes: dict | None = None) -> dict:
     """Priced take-off: lines to add (item + purchase qty in its unit) and what couldn't be added and why."""
-    qs, rs = quantities(L, W, H, objs, openings), rules(db)
+    qs, rs = quantities(L, W, H, objs, openings, finishes), rules(db)
     skus = [r["sku"] for r in rs.values() if r["sku"]]
     items = {i.sku.upper(): i for i in db.query(m.FurnitureItem).filter(func.upper(m.FurnitureItem.sku).in_([s.upper() for s in skus]))} if skus else {}
     lines, skipped, rows = [], [], []
@@ -129,7 +171,7 @@ def plan(db: Session, L: float, W: float, H: float, objs: list[dict], openings=(
     return {"lines": lines, "skipped": skipped, "rows": rows}
 
 
-def for_design(db: Session, room_id: str, objs: list[dict]) -> dict:
+def for_design(db: Session, room_id: str, objs: list[dict], finishes: dict | None = None) -> dict:
     from app.routers.api import _room_dims, room_openings          # the single source of room dimensions (verified measurements win) + doors/windows
     L, W, H = _room_dims(db, room_id)
-    return plan(db, L, W, H, objs, room_openings(db, room_id))
+    return plan(db, L, W, H, objs, room_openings(db, room_id), finishes)

@@ -9,7 +9,7 @@ MANUFACTURED = {"wardrobe", "tv unit", "study", "dresser", "shoe rack", "kitchen
                 "kitchen sink", "kitchen hob", "kitchen wall", "linen cabinet", "mirror cabinet", "utility base", "utility tall", "utility wall"}
 T, BACK_T = 18, 8                     # board thicknesses (mm)
 SHEET_L, SHEET_W, KERF = 2440, 1220, 4  # 8 x 4 ft sheet, saw kerf
-BOARD = {T: "18mm carcass board", BACK_T: "8mm back panel"}
+BOARD = {T: "18mm carcass board", BACK_T: "8mm back panel", 12: "12mm drawer board"}
 
 
 def is_manufactured(category: str | None, L, W, H) -> bool:
@@ -30,10 +30,30 @@ PLINTH = 100                          # floor kitchen / utility / vanity units s
 DRAWERS = 3
 
 
+def wardrobe_layout(L: float, D: float, H: float) -> dict:
+    """Internal layout of a wardrobe (shared by the cutting list, the shop drawing and the working drawings): shutters ~450 mm in pairs,
+    one bay per pair; the middle bay(s) are HANGING (rod near the top, a row of two small drawers + two full drawers at the bottom), the
+    others SHELVES (equal shelves ~350 mm apart). A single wardrobe bay is hanging."""
+    doors = max(1, round(L / 450)); door_w = L / doors
+    groups = [2] * (doors // 2) + ([1] if doors % 2 else [])
+    n = len(groups); inner = L - 2 * T - (n - 1) * T
+    widths = [inner * g / doors for g in groups]
+    kinds = ["HANGING"] if n == 1 else ["SHELVES", "HANGING"] if n == 2 else ["SHELVES"] + ["HANGING"] * (n - 2) + ["SHELVES"]
+    bays, x = [], T
+    CH = H - 2 * T
+    for w, k in zip(widths, kinds):
+        b = {"x0": round(x), "x1": round(x + w), "kind": k, "width": round(w)}
+        if k == "SHELVES": b["shelves"] = max(3, round(CH / 350) - 1)
+        else: b.update(rod_from_top=80, small_drawers=2 if w >= 600 else 1, drawers=2, drawer_h=220, small_h=160)
+        bays.append(b); x += w + T
+    return {"doors": doors, "door_w": round(door_w), "bays": bays, "partitions": [round(b["x1"]) for b in bays[:-1]]}
+
+
 def unit_kind(category: str | None, H: float) -> str | None:
     """None = generic carcass (old behaviour). sink / hob / base (floor units on a plinth), wall, tall — shared with the shop drawings."""
     cat = (category or "").strip().lower()
     if not cat: return None
+    if cat == "wardrobe": return "wardrobe"
     if cat == "kitchen sink": return "sink"
     if cat == "kitchen hob": return "hob"
     if cat in ("kitchen wall", "utility wall", "mirror cabinet"): return "wall"
@@ -54,6 +74,27 @@ def panels(L: float, D: float, H: float, category: str | None = None) -> list[di
     shelves_per_bay = 0 if kind in ("sink", "hob") else 1 if CH < 900 else max(1, round(CH / 450) - 1)
     doors = max(1, round(W / 450))
     door_w, door_h = W / doors - 3, CH - 3
+    if kind == "wardrobe":                                   # internal layout = wardrobe_layout (shelf bays + hanging bays with drawers)
+        wl = wardrobe_layout(W, D, CH)
+        raw = [("Side", CH, D, 2, T, CH * 2), ("Top", W - 2 * T, D, 1, T, W - 2 * T), ("Bottom", W - 2 * T, D, 1, T, W - 2 * T)]
+        if wl["partitions"]: raw.append(("Partition", CH - 2 * T, D, len(wl["partitions"]), T, (CH - 2 * T) * len(wl["partitions"])))
+        for b in wl["bays"]:
+            if b["kind"] == "SHELVES": raw.append(("Shelf", b["width"], D - 20, b["shelves"], T, b["width"] * b["shelves"]))
+            else:
+                raw.append(("Drawer front", b["width"] - 3, b["drawer_h"] - 3, b["drawers"], T, 2 * (b["width"] + b["drawer_h"]) * b["drawers"]))
+                sw = b["width"] / b["small_drawers"]
+                raw.append(("Small drawer front", sw - 3, b["small_h"] - 3, b["small_drawers"], T, 2 * (sw + b["small_h"]) * b["small_drawers"]))
+                k = b["drawers"] + b["small_drawers"]
+                raw.append(("Drawer side", D - 60, 140, 2 * k, T, 0)); raw.append(("Drawer bottom", b["width"] - 30, D - 60, k, BACK_T, 0))
+                raw.append(("Shelf above drawers", b["width"], D - 20, 1, T, b["width"]))
+        raw.append(("Shutter", CH - 3, wl["door_w"] - 3, wl["doors"], T, 2 * (CH - 3 + wl["door_w"] - 3) * wl["doors"]))
+        raw.append(("Back", W, CH, 1, BACK_T, 0))
+        out = []
+        for name, a, b, qty, th, edge in raw:
+            for pl, pw, pieces in _fit(a, b):
+                out.append({"name": name + (f" (in {pieces} pieces)" if pieces > 1 else ""), "length": int(round(pl)), "width": int(round(pw)),
+                            "qty": int(qty * pieces), "thickness": th, "edge_m": round(edge / 1000, 2)})
+        return out
     raw = [("Side", CH, D, 2, T, CH * 2), ("Top", W - 2 * T, D, 1, T, W - 2 * T), ("Bottom", W - 2 * T, D, 1, T, W - 2 * T)]
     if parts: raw.append(("Partition", CH - 2 * T, D, parts, T, (CH - 2 * T) * parts))
     if shelves_per_bay: raw.append(("Shelf", bay_w, D - 20, shelves_per_bay * bays, T, bay_w * shelves_per_bay * bays))

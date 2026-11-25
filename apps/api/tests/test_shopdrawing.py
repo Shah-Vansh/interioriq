@@ -28,8 +28,11 @@ def text(b): d = pdfium.PdfDocument(b); return "\n".join(d[i].get_textpage().get
 def test_drawing_matches_the_cutting_list(cat, L, D, H):
     g = shopdrawing.layout(cat, L, D, H); p = {x["name"].split(" (")[0]: x for x in cutting.panels(L, D, H, cat)}
     assert len(g["partitions"]) == p.get("Partition", {"qty": 0})["qty"]
-    assert g["shelves_per_bay"] * g["bays"] == p.get("Shelf", {"qty": 0})["qty"]
-    assert g["doors"] == p.get("Shutter", {"qty": 0})["qty"] and g["drawers"] == p.get("Drawer front", {"qty": 0})["qty"]
+    panels = cutting.panels(L, D, H, cat)
+    shelves = sum(x["qty"] for x in panels if x["name"] == "Shelf")
+    drawn = sum(len(b["ys"]) for b in g["wbays"] if b["kind"] == "SHELVES") if g.get("wbays") else g["shelves_per_bay"] * g["bays"]
+    assert drawn == shelves
+    assert g["doors"] == p.get("Shutter", {"qty": 0})["qty"] and (sum(len(b["drawers"]) for b in g["wbays"] if b["kind"] == "HANGING") if g.get("wbays") else g["drawers"]) == p.get("Drawer front", {"qty": 0})["qty"]
     assert p["Side"]["length"] == H - g["plinth"]                                  # carcass height excludes the plinth
     cut = cutting.cut_list(L, D, H, cat)
     t = text(shopdrawing.pdf(title=f"Unit {cat}", wo_number="WO-T-001", project="IQ-T", unit_no=1, sku="SKU-1", material="BWP ply", category=cat, cut=cut, company="Studio"))

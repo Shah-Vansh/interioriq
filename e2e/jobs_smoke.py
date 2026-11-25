@@ -16,7 +16,7 @@ with sync_playwright() as p:
     page.goto(f"{WEB}/login"); page.fill("#email", "admin@interioriq.com"); page.fill("#password", "ChangeMe123!"); page.click("button:has-text('Sign in')"); page.wait_for_url("**/dashboard")
     page.goto(f"{WEB}/settings/system"); page.get_by_test_id("schema-status").wait_for()
     sch = page.get_by_test_id("schema-status").inner_text(); jobs = page.get_by_test_id("jobs-status").inner_text()
-    check("schema: alembic, database at the code's head", "alembic" in sch and sch.count("0008") == 2 and "Run" not in sch, sch)
+    check("schema: alembic, database at the code's head", "alembic" in sch and sch.count("0009") == 2 and "Run" not in sch, sch)
     check(f"jobs run on the {BACKEND} backend", ("Celery workers" in jobs) if BACKEND == "celery" else ("This API process" in jobs), jobs)
     if BACKEND == "celery": check("broker shown without secrets", "sqla+sqlite" in jobs and "***" not in jobs or "***" in jobs)
     check("no browser errors", not problems, "; ".join(problems[:3]))

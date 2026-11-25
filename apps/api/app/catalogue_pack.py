@@ -35,6 +35,15 @@ PACKS = {
         ("UTT-600-001", "Utility Tall Cabinet 600 (brooms)", "Utility Tall", 600, 560, 2100, 27000, 19000, "BWP ply, laminate", None, None),
         ("UTW-900-001", "Utility Wall Cabinet 900", "Utility Wall", 900, 350, 700, 13000, 9100, "BWP ply, laminate", None, 1450),
     ],
+    "home": [
+        ("OCH-CANE-001", "Cane Lounge Chair", "Outdoor Chair", 680, 720, 820, 14500, 10200, "Cane + teak frame", "traditional, boho", None),
+        ("OTB-TEAK-001", "Outdoor Side Table — Teak", "Outdoor Table", 550, 550, 450, 7800, 5400, "Teak", "traditional", None),
+        ("PLN-LRG-001", "Large Planter with Areca Palm", "Planter", 450, 450, 1400, 4200, 2900, "Ceramic pot", "boho, scandinavian", None),
+        ("SHR-900-001", "Shoe Rack 900 with seat", "Shoe Rack", 900, 350, 1000, 16500, 11500, "BWP ply, laminate", "modern", None),
+        ("CON-WLT-001", "Console Table — Walnut", "Console Table", 1100, 350, 780, 18500, 13000, "Walnut veneer", "modern, luxury", None),
+        ("PJU-900-001", "Pooja Unit 900 with drawers", "Pooja Unit", 900, 450, 1800, 42000, 30000, "Teak veneer, brass bells", "traditional", None),
+        ("STR-900-001", "Storage Unit 900 (store room)", "Storage", 900, 450, 2100, 24000, 17000, "BWP ply, laminate", None, None),
+    ],
 }
 USER = {"sub": None, "name": "Catalogue pack"}
 

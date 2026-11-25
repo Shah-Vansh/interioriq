@@ -101,6 +101,11 @@ def electrical(L, W, H, objs, openings=()) -> dict:
             wet = True; add("SOCKET", "Exhaust fan point (6A)", x + l / 2, y + w / 2, 2200)
         elif cat == "washing machine":
             wet = True; add("SOCKET", "16A washing-machine socket", x + l / 2, y + w / 2, 1000)
+        elif cat in ("outdoor chair", "planter", "shoe rack", "console table", "pooja unit", "storage"):
+            wet = True                                                   # verandah / foyer / pooja / store: no AC point
+            if cat == "pooja unit": add("LIGHT", "Lamp / diya light point over the pooja unit", x + l / 2, y + w / 2, 2000); add("SOCKET", "6A socket for the pooja lamp", x + l + 150, y + w / 2, 1200)
+            if cat == "console table": add("SOCKET", "6A socket for a table lamp", x + l / 2, y + w / 2, 300)
+            if cat == "shoe rack": add("LIGHT", "Foyer light point", x + l / 2, y + w / 2, 2400)
         elif cat in ("utility base", "utility cabinet"):
             add("SOCKET", "6A counter socket (iron)", x + l / 2, y + w / 2, 1100)
     hob = any((o.get("category") or "").lower() == "kitchen hob" for o in objs)

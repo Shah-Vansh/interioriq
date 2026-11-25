@@ -22,8 +22,9 @@ from .geometry import DOOR_HEAD, WALL_MOUNTED, Obj, Room, area_overlap, door_zon
 G = 50                               # gap left between a unit and the wall
 ROOM_KIND = {"MASTER_BEDROOM": "BEDROOM", "BEDROOM": "BEDROOM", "KIDS_BEDROOM": "BEDROOM", "GUEST_BEDROOM": "BEDROOM",
              "LIVING": "LIVING", "DINING": "DINING", "KITCHEN": "KITCHEN", "STUDY": "STUDY", "BATHROOM": "BATHROOM", "TOILET": "BATHROOM",
-             "UTILITY": "UTILITY", "LAUNDRY": "UTILITY"}
-KINDS = ("BEDROOM", "LIVING", "DINING", "KITCHEN", "STUDY", "BATHROOM", "UTILITY")
+             "UTILITY": "UTILITY", "LAUNDRY": "UTILITY", "WASH_AREA": "UTILITY",
+             "VERANDAH": "OUTDOOR", "BALCONY": "OUTDOOR", "FOYER": "FOYER", "PASSAGE": "FOYER", "POOJA": "POOJA", "STORE": "STORE"}
+KINDS = ("BEDROOM", "LIVING", "DINING", "KITCHEN", "STUDY", "BATHROOM", "UTILITY", "OUTDOOR", "FOYER", "POOJA", "STORE")
 
 # slot → catalogue categories (case-insensitive, exact); the first alias that has items wins
 SLOTS = {
@@ -38,20 +39,28 @@ SLOTS = {
     "mirror": ("mirror cabinet", "bathroom mirror"), "linen": ("linen cabinet", "bathroom storage"),
     "washer": ("washing machine",), "utility_base": ("utility base", "utility cabinet"), "utility_tall": ("utility tall", "broom cabinet"),
     "utility_wall": ("utility wall",),
+    # M37 verandah / balcony, foyer, pooja room, store
+    "outdoor_seat": ("outdoor chair", "lounge chair", "armchair"), "outdoor_table": ("outdoor table", "side table", "coffee table"), "planter": ("planter", "plant"),
+    "shoe_rack": ("shoe rack",), "console": ("console table", "console"), "pooja_unit": ("pooja unit", "mandir"), "store_unit": ("storage", "utility tall", "linen cabinet"),
 }
 LABEL = {"bed": "Bed", "wardrobe": "Wardrobe", "bedside": "Bedside table", "dresser": "Dresser", "sofa": "Sofa", "tv": "TV unit",
          "coffee": "Coffee table", "armchair": "Armchair", "bookshelf": "Bookshelf", "dining_table": "Dining table", "dining_chair": "Dining chair",
          "crockery": "Crockery unit", "base": "Kitchen base unit", "tall": "Kitchen tall unit", "desk": "Study desk", "desk_chair": "Desk chair",
          "sink": "Sink unit", "hob": "Hob unit", "wall_unit": "Wall cabinet", "filler": "Filler panel",
          "wc": "WC", "vanity": "Vanity / washbasin", "shower": "Shower enclosure", "mirror": "Mirror cabinet", "linen": "Linen cabinet",
-         "washer": "Washing machine", "utility_base": "Utility base cabinet", "utility_tall": "Utility tall cabinet", "utility_wall": "Utility wall cabinet"}
+         "washer": "Washing machine", "utility_base": "Utility base cabinet", "utility_tall": "Utility tall cabinet", "utility_wall": "Utility wall cabinet",
+         "outdoor_seat": "Outdoor seat", "outdoor_table": "Side table", "planter": "Planter", "shoe_rack": "Shoe rack", "console": "Console table",
+         "pooja_unit": "Pooja unit", "store_unit": "Storage unit"}
 REQUIRED = {"BEDROOM": ("bed", "wardrobe"), "LIVING": ("sofa", "tv"), "DINING": ("dining_table", "dining_chair"), "KITCHEN": ("base",), "STUDY": ("desk",),
-            "BATHROOM": ("wc", "vanity"), "UTILITY": ("washer",)}
+            "BATHROOM": ("wc", "vanity"), "UTILITY": ("washer",), "OUTDOOR": ("outdoor_seat",), "FOYER": ("shoe_rack",), "POOJA": ("pooja_unit",),
+            "STORE": ("store_unit",)}
 OPTIONAL = {"BEDROOM": ("bedside", "dresser"), "LIVING": ("coffee", "armchair", "bookshelf"), "DINING": ("crockery",), "KITCHEN": ("tall", "sink", "hob", "wall_unit", "filler"),
-            "STUDY": ("desk_chair", "bookshelf"), "BATHROOM": ("shower", "mirror", "linen"), "UTILITY": ("utility_base", "utility_tall", "utility_wall")}
+            "STUDY": ("desk_chair", "bookshelf"), "BATHROOM": ("shower", "mirror", "linen"), "UTILITY": ("utility_base", "utility_tall", "utility_wall"),
+            "OUTDOOR": ("outdoor_table", "planter"), "FOYER": ("console",), "POOJA": (), "STORE": ()}
 # clear zone kept in front of a unit (mm): doors/drawers open, you stand or sit there
 FRONT = {"wardrobe": 600, "dresser": 600, "sofa": 400, "tv": 600, "armchair": 400, "bookshelf": 600, "crockery": 600, "base": 1000, "tall": 1000, "desk": 750,
-         "wc": 600, "vanity": 700, "shower": 600, "linen": 600, "washer": 700, "utility_base": 800, "utility_tall": 700}
+         "wc": 600, "vanity": 700, "shower": 600, "linen": 600, "washer": 700, "utility_base": 800, "utility_tall": 700,
+         "outdoor_seat": 350, "shoe_rack": 500, "console": 450, "pooja_unit": 900, "store_unit": 600}
 WC_SIDE = 200                        # clear elbow room each side of a WC (the 600 mm zone in front is widened by this)
 MIRROR_AT = 1200                     # default underside of a mirror cabinet over the vanity
 VIEW_MIN = 1500                      # sofa front ↔ TV front
@@ -698,8 +707,74 @@ def utility(plan: Plan, cat, opts):
         if n: plan.notes.append(f"{n} wall cabinet(s) over the utility counter at {z0:.0f} mm.")
 
 
+# ── verandah / balcony, foyer, pooja room, store (M37) ─────────────────────────
+def _beside(plan: Plan, slot: str, item: dict, ref: Obj, wall: str, gap=100) -> Obj | None:
+    """Place `item` on the same wall right next to `ref` (either side)."""
+    for pos in (along_start(ref, wall) + along_len(ref, wall) + gap, along_start(ref, wall) - item["length_mm"] - gap):
+        if pos < G - 0.01 or pos + item["length_mm"] > wall_len(plan.room, wall) - G + 0.01: continue
+        o = on_wall(plan, slot, item, wall, pos); plan.ids[slot] -= 1
+        z = front_zone(o, wall, FRONT.get(slot, 0)) if slot in FRONT else None
+        if plan.ok(o, z): plan.ids[slot] += 1; plan.add(o, z, wall); return o
+    return None
+
+
+def outdoor(plan: Plan, cat, opts):
+    R = plan.room; walls = away_from_door(R)
+    seats = candidates(cat, "outdoor_seat")
+    a = first_fit(plan, "outdoor_seat", seats, walls, prefer="center", allow=("outdoor_table*",)) if seats else None
+    if not a: return
+    w = plan.wall[a.id]; b = _beside(plan, "outdoor_seat", plan.slot_of[a.id][1], a, w, gap=450)
+    plan.notes.append(f"Seating against the {wall_name(w)} wall, away from the door" + (" — a pair with a small table between." if b else "."))
+    if want(opts, "outdoor_table") and (tb := candidates(cat, "outdoor_table")):
+        t = tb[-1] if len(tb) > 1 else tb[0]
+        placed = False
+        if b:
+            mid = (along_start(a, w) + along_len(a, w) + along_start(b, w)) / 2 if along_start(b, w) > along_start(a, w) else (along_start(b, w) + along_len(b, w) + along_start(a, w)) / 2
+            o = on_wall(plan, "outdoor_table", t, w, mid - t["length_mm"] / 2); plan.ids["outdoor_table"] -= 1
+            if plan.ok(o, ignore=(a.id, b.id)) and not any(area_overlap(o, x) for x in (a, b)): plan.ids["outdoor_table"] += 1; plan.add(o, None, w); placed = True
+        if not placed: first_fit(plan, "outdoor_table", [t], walls, prefer="corner")
+    if want(opts, "planter") and (pl := candidates(cat, "planter")):
+        n = 0
+        for wall in walls:
+            for pos in positions(R, pl[0]["length_mm"], wall, "corner")[:2]:
+                o = on_wall(plan, "planter", pl[0], wall, pos); plan.ids["planter"] -= 1
+                if plan.ok(o): plan.ids["planter"] += 1; plan.add(o, None, wall); n += 1
+                if n >= 2: break
+            if n >= 2: break
+        if n: plan.notes.append(f"{n} planter(s) in the corners for greenery.")
+
+
+def foyer(plan: Plan, cat, opts):
+    R = plan.room; dw = door_walls(R)
+    side = [w for w in walls_by_length(R) if w not in dw] + [w for w in walls_by_length(R) if w in dw]
+    s = first_fit(plan, "shoe_rack", candidates(cat, "shoe_rack"), side, prefer="corner") if candidates(cat, "shoe_rack") else None
+    if s: plan.notes.append(f"{s.name} near the entrance on the {wall_name(plan.wall[s.id])} wall — shoes off as you come in.")
+    if want(opts, "console") and (cs := candidates(cat, "console")):
+        c = first_fit(plan, "console", cs, [w for w in walls_by_length(R) if not s or w != plan.wall[s.id]] or walls_by_length(R))
+        if c: plan.notes.append(f"{c.name} on the {wall_name(plan.wall[c.id])} wall — keys, a lamp and a mirror above.")
+
+
+def pooja(plan: Plan, cat, opts):
+    R = plan.room
+    order = ["E", "N", "W", "S"]                    # unit on the east wall → you face east while praying (else north)
+    walls = [w for w in order if w not in door_walls(R)] + [w for w in order if w in door_walls(R)]
+    u = first_fit(plan, "pooja_unit", candidates(cat, "pooja_unit"), walls) if candidates(cat, "pooja_unit") else None
+    if u: plan.notes.append(f"{u.name} on the {wall_name(plan.wall[u.id])} wall" + (" — you face east while praying." if plan.wall[u.id] == "E" else
+                            " — you face north while praying." if plan.wall[u.id] == "N" else " (east and north walls weren't free)."))
+
+
+def store(plan: Plan, cat, opts):
+    R = plan.room; units = candidates(cat, "store_unit"); n = 0
+    for _ in range(6):
+        if not place_on_walls(plan, "store_unit", units, walls_by_length(R), prefer="corner"): break
+        n += 1
+    if n: plan.notes.append(f"{n} storage unit(s) along the walls, keeping a {FRONT['store_unit']} mm aisle.")
+    else: plan.notes.append("Storage unit left out: no wall keeps the door and an aisle clear.")
+
+
 # ── entry point ──────────────────────────────────────────────────────────────
-PLANNERS = {"BEDROOM": bedroom, "LIVING": living, "DINING": dining, "KITCHEN": kitchen, "STUDY": study, "BATHROOM": bathroom, "UTILITY": utility}
+PLANNERS = {"BEDROOM": bedroom, "LIVING": living, "DINING": dining, "KITCHEN": kitchen, "STUDY": study, "BATHROOM": bathroom, "UTILITY": utility,
+            "OUTDOOR": outdoor, "FOYER": foyer, "POOJA": pooja, "STORE": store}
 
 
 def want(opts: dict, slot: str) -> bool: return slot not in set(opts.get("skip") or [])
@@ -778,7 +853,7 @@ def plan(room: Room, room_type: str, catalogue: list[dict], options: dict | None
     styles: style words from the brief (preferred items); options['tier']: BUDGET | BALANCED | PREMIUM; budget + cost(objs)->Decimal: fit the total."""
     kind = kind_of(room_type) or ((room_type or "").upper() if (room_type or "").upper() in KINDS else None)
     if not kind:
-        raise LayoutError(f"Automatic layouts cover bedrooms, living, dining, kitchen, study, bathroom and utility rooms — not {room_type}. "
+        raise LayoutError(f"Automatic layouts cover bedrooms, living, dining, kitchen, study, bathroom, utility / wash area, verandah / balcony, foyer, pooja and store rooms — not {room_type}. "
                           "Pick a layout type, or place items by hand in the 3D editor.")
     opts = options or {}; p = Plan(room, kind)
     tier = (opts.get("tier") or "BALANCED").upper()

@@ -58,5 +58,5 @@ def put_rules(body: dict, db: Session = Depends(get_db), user: dict = Depends(re
 def preview(rid: str, version: int, db: Session = Depends(get_db), user: dict = Depends(require_roles(*READ))):
     d = db.query(m.Design).filter_by(room_id=rid, version=version).first()
     if not d: raise HTTPException(404, f"Design version {version} not found")
-    t = takeoff.for_design(db, rid, d.design_json.get("objects", []))
+    t = takeoff.for_design(db, rid, d.design_json.get("objects", []), d.design_json.get("finishes"))
     return {"version": version, "rows": t["rows"], "skipped": t["skipped"], "lines": len(t["lines"]), "configured": takeoff.configured(db)}
